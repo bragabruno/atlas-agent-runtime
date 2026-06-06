@@ -1,0 +1,92 @@
+@startuml agent-loop-class
+' This PlantUML diagram is automatically generated and enhanced.
+' Comments below each action are incorporated into action labels.
+' Variables in {{name}} format are highlighted with bold/italic styling.
+'
+' For more information and usage instructions, see:
+' https://github.com/hzarsteck/puml-sd-multiline
+
+title atlas-agent-runtime — Agent Loop Class Diagram
+
+skinparam classAttributeIconSize 0
+skinparam classFontSize 13
+skinparam ArrowFontSize 12
+
+class AgentSpec {
+    +agent_name: str
+    +agent_version: str
+    +system_prompt_ref: str
+    +model_alias: str
+    +tool_whitelist: list[str]
+    +max_iterations: int
+    +token_budget: int
+    +timeout_s: int
+    +from_yaml(path: str): AgentSpec
+}
+
+class AgentRunner {
+    -spec: AgentSpec
+    -registry: ToolRegistry
+    -caps: CapsEnforcer
+    -gw: GatewayClient
+    -mcp: McpClient
+    +run(input: str): RunResult
+    -_step(messages: list): StepRecord
+    -_dispatch_tool(call: ToolCall): ToolResult
+    -_enforce_citation(answer: str, source_ids: list[str]): None
+}
+
+class ToolRegistry {
+    -whitelist: set[str]
+    +check(tool_name: str): bool
+    +reject(tool_name: str): Never
+}
+
+class ToolCall {
+    +tool_name: str
+    +arguments: dict
+    +call_id: str
+}
+
+class StepRecord {
+    +agent_run_id: UUID
+    +idx: int
+    +type: Literal["llm_call", "tool_call"]
+    +payload: dict
+    +tokens: int
+    +latency_ms: int
+}
+
+class CapsEnforcer {
+    -max_iterations: int
+    -token_budget: int
+    -timeout_s: float
+    -_iterations: int
+    -_tokens_used: int
+    -_started_at: float
+    +tick_iteration(): None
+    +add_tokens(n: int): None
+    +check_wall_time(): None
+}
+
+class GatewayClient {
+    -base_url: str
+    +chat(model_alias: str, messages: list, tools: list): ChatResponse
+}
+
+class McpClient {
+    +doc_search(query: str, k: int): list[Chunk]
+    +verify_citation(source_id: str, claim: str): CitationResult
+}
+
+AgentRunner "1" o-- "1" AgentSpec : configured by
+AgentRunner "1" *-- "1" ToolRegistry : uses
+AgentRunner "1" *-- "1" CapsEnforcer : enforces caps via
+AgentRunner "1" *-- "1" GatewayClient : calls LLM via
+AgentRunner "1" *-- "1" McpClient : calls tools via
+AgentRunner ..> ToolCall : creates
+AgentRunner ..> StepRecord : persists
+AgentSpec --> ToolRegistry : tool_whitelist
+CapsEnforcer ..> AgentRunner : raises CapBreachError
+
+@enduml
