@@ -1,6 +1,6 @@
 # atlas-agent-runtime
 
-Hand-rolled thin agent loop for Atlas. No LangGraph — a purpose-built Python 3.12 asyncio engine that executes YAML-defined agents with hard caps on iterations, tokens, and wall-time.
+Hand-rolled thin agent loop for Atlas. No LangGraph — a purpose-built Python 3.12 asyncio engine that executes YAML-defined agents with hard caps on iterations, tokens, and wall-time. (Pydantic AI is the sanctioned fallback if the hand-rolled cost isn't affordable — see [ADR-006](../atlas-docs/02-tech-stack-and-adrs.md).) Runs are triggered over a thin **FastAPI** surface ([ADR-020](../atlas-docs/02-tech-stack-and-adrs.md)).
 
 ## Purpose
 
@@ -60,6 +60,7 @@ Runs that hit a cap are persisted with `status = "capped"`.
 
 ```
 app/
+├── api/               # FastAPI trigger surface: POST /v1/agent/runs, GET /v1/agent/runs/{id} (ADR-020)
 ├── loop/              # AgentRunner — main asyncio run loop
 ├── agentspec/         # Pydantic model for YAML agent definitions (AgentSpec)
 ├── tools/
@@ -133,6 +134,7 @@ Spans follow the GenAI semantic conventions:
 
 - **Python**: 3.12
 - See `requirements.txt` for pinned versions. Key dependencies:
+  - `fastapi` + `uvicorn` (run-trigger surface — ADR-020)
   - `anthropic` / gateway HTTP client
   - `mcp` (official Python MCP SDK)
   - `pydantic>=2`
