@@ -16,6 +16,13 @@ every tool-call response (finish_reason == "tool_use") is checked against the
 whitelist via `registry.assert_allowed`. A non-whitelisted tool raises
 `ToolNotAllowedError` immediately.
 
+AGT-5 integration: an optional `ToolSanitizer` can be injected. When present,
+every tool-call response content is sanitized before being appended to the
+conversation messages list.  This prevents attacker-influenced tool output
+(zero-width chars, forged role turns, injection imperatives) from re-entering
+the agent context verbatim.  A `ToolSanitizer` constructed with default
+settings fences output in untrusted-content delimiters.
+
 AGT-6 integration: an optional `Session` (SQLAlchemy) can be injected.
 When present the runner persists each step and the run lifecycle to the DB.
 A run that was interrupted can be resumed by passing ``resume_run_id`` — the
@@ -45,6 +52,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from app.tools.registry.registry import ToolRegistry
+    from app.tools.sanitize.sanitizer import ToolSanitizer
 
 
 @dataclass
@@ -75,6 +83,9 @@ class AgentRunner:
     Optional injections (all keyword-only):
         registry: `ToolRegistry` — if provided, every tool-use response is
             checked against the whitelist before continuing (AGT-4).
+        sanitizer: `ToolSanitizer` — if provided, every tool-use response
+            content is sanitized before being appended to the messages list
+            (AGT-5).  Prevents injection-via-tool-results.
         session: SQLAlchemy `Session` — if provided, the run and its steps are
             persisted; callers are responsible for commit/rollback (AGT-6).
         resume_run_id: `uuid.UUID` — if provided alongside a *session*, the
@@ -90,6 +101,7 @@ class AgentRunner:
         spec: AgentSpec,
         client: GatewayClient,
         registry: ToolRegistry | None = None,
+        sanitizer: ToolSanitizer | None = None,
         session: Session | None = None,
         resume_run_id: uuid.UUID | None = None,
         tracer: Tracer | None = None,
@@ -97,6 +109,7 @@ class AgentRunner:
         self._spec = spec
         self._client = client
         self._registry = registry
+        self._sanitizer = sanitizer
         self._session = session
         self._resume_run_id = resume_run_id
         self._tracer = tracer
@@ -264,7 +277,13 @@ class AgentRunner:
                     raise CapBreachError("timeout_s", spec.timeout_s, "s") from None
 
                 responses.append(response)
-                messages.append({"role": "assistant", "content": response.content})
+
+                # --- AGT-5: sanitize tool output before context re-entry ---
+                content_for_context = response.content
+                if response.finish_reason == "tool_use" and self._sanitizer is not None:
+                    content_for_context = self._sanitizer.sanitize(response.content).text
+
+                messages.append({"role": "assistant", "content": content_for_context})
 
                 if response.finish_reason == "stop":
                     break
