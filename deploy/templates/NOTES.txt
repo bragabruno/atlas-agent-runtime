@@ -1,0 +1,18 @@
+atlas-agent-runtime {{ .Chart.AppVersion }} deployed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Workload controller:
+{{- if .Values.canary.enabled }}
+  Argo Rollouts Rollout (canary) — promotion gated by the slo-check AnalysisTemplate.
+  Watch:   kubectl argo rollouts get rollout {{ include "atlas-agent-runtime.fullname" . }} --watch
+{{- else }}
+  Deployment ({{ .Values.replicaCount }} replica(s){{ if .Values.autoscaling.enabled }}, HPA-managed{{ end }}).
+  Status:  kubectl rollout status deployment/{{ include "atlas-agent-runtime.fullname" . }}
+{{- end }}
+
+Service:   {{ include "atlas-agent-runtime.fullname" . }}:{{ .Values.service.port }} (ClusterIP)
+Health:    {{ .Values.probes.path }}
+Secrets:   {{ if .Values.secrets.enabled }}Key Vault "{{ .Values.secrets.keyVaultName }}" via CSI at {{ .Values.secrets.mountPath }}{{ else }}disabled{{ end }}
+
+FastAPI trigger surface:
+  POST /v1/agent/runs    — trigger a new agent run
+  GET  /v1/agent/runs/{id} — retrieve run status

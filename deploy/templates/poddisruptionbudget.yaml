@@ -1,0 +1,17 @@
+{{- /*
+PodDisruptionBudget — preserves a minimum of healthy pods during voluntary
+disruptions (node drains, upgrades). Enabled in prod (atlas-docs/04 §4.2).
+*/ -}}
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "atlas-agent-runtime.fullname" . }}
+  labels:
+    {{- include "atlas-agent-runtime.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "atlas-agent-runtime.selectorLabels" . | nindent 6 }}
+{{- end }}
