@@ -15,8 +15,8 @@ wheels/
 pip-wheel-metadata/
 share/python-wheels/
 .installed.cfg
-lib/
-lib64/
+/lib/
+/lib64/
 MANIFEST
 
 # Virtual environments
