@@ -14,7 +14,10 @@ repos:
       - id: check-merge-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.13  # matches .trunk/trunk.yaml ruff@0.11.13
+    # MUST stay in sync with the ruff pin in .trunk/trunk.yaml (ruff@0.11.13).
+    # Trunk is the single source of truth for ruff; if you bump ruff there, bump
+    # this rev to the same version (vX.Y.Z) so local pre-commit and CI agree.
+    rev: v0.11.13  # == .trunk/trunk.yaml ruff@0.11.13
     hooks:
       - id: ruff
         args: [--fix]
