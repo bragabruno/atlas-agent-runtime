@@ -146,6 +146,13 @@ Spans follow the GenAI semantic conventions:
 
 No secrets in code — all credentials via environment variables.
 
+### Database migrations
+
+Generating Alembic migrations requires **`trunk` on `PATH`**: `alembic.ini`'s
+`[post_write_hooks]` runs `trunk check --fix` on each new revision (Trunk is the
+single source of truth for ruff — see `.trunk/trunk.yaml`). Without `trunk`
+installed, `alembic revision --autogenerate` fails at the post-write hook.
+
 ---
 
 ## Diagrams

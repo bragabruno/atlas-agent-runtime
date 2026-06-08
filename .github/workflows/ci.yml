@@ -1,0 +1,95 @@
+# GitHub Actions CI — atlas-agent-runtime (A1).
+#
+# Mirrors bitbucket-pipelines.yml Gate 1 so the same correctness gate runs on the
+# GitHub remote. bitbucket-pipelines.yml is kept as the Enhesa-mirror reference;
+# this file is the executable gate for github.com/bragabruno/atlas-agent-runtime.
+#
+# Gate 1 (Correctness): dep_audit -> Trunk(ruff) -> pyright -> pytest (zero API spend).
+# XCUT-6: validate_diagrams.sh validates Mermaid + PlantUML diagrams.
+#
+# All third-party actions are pinned to a commit SHA (supply-chain rule: no
+# floating refs; every pin verified >14 days old). The trailing comment records
+# the human-readable tag and release date each SHA corresponds to.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Gate 1a — dep-audit, Lint (Trunk → ruff) & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 (2026-01-09)
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0 (2026-01-22)
+        with:
+          python-version: 3.12.13
+      - name: Install dev dependencies
+        run: pip install --quiet -e ".[dev]"
+      # XCUT-4: fail on any unpinned / <14-day-old dependency (also audits .trunk/trunk.yaml).
+      - name: Dependency + age audit
+        run: python scripts/dep_audit.py --min-age-days 14
+      # Trunk fetches its tools at runtime; cache them keyed on the pinned config.
+      - name: Cache Trunk
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5 (2026-04-13)
+        with:
+          path: ~/.cache/trunk
+          key: trunk-${{ runner.os }}-${{ hashFiles('.trunk/trunk.yaml') }}
+      - name: Install Trunk
+        run: curl -fsSL https://get.trunk.io | bash -s -- -y
+      # One check = ruff lint + ruff format over all files; rc!=0 on any issue.
+      - name: Trunk check
+        run: trunk check --all --ci
+      - name: Typecheck
+        run: pyright
+
+  test:
+    name: Gate 1b — Unit Tests (zero API spend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 (2026-01-09)
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0 (2026-01-22)
+        with:
+          python-version: 3.12.13
+      - name: Install dev dependencies
+        run: pip install --quiet -e ".[dev]"
+      # Offline: MockProvider + fakeredis; no live PG/Redis/LLM calls.
+      - name: Run tests
+        run: pytest -q
+
+  diagrams:
+    name: XCUT-6 — Diagram validation
+    runs-on: ubuntu-latest
+    env:
+      # mermaid-cli (11.14.0) runs headless via the system Chromium. On Ubuntu the
+      # apt 'chromium' package installs the real binary at /usr/bin/chromium
+      # (matches the bitbucket node-image step); 'chromium-browser' is a snap stub
+      # that fails headless in CI, so it is deliberately NOT used here.
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 (2026-01-09)
+      - name: Install JRE + Chromium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            default-jre-headless chromium fonts-liberation
+      - name: Fetch pinned PlantUML jar
+        # Pinned PlantUML jar (1.2026.3, 2026-05-08) from the GitHub release.
+        env:
+          PLANTUML_VERSION: 1.2026.3
+        run: |
+          curl -fsSL -o /tmp/plantuml.jar \
+            "https://github.com/plantuml/plantuml/releases/download/v${PLANTUML_VERSION}/plantuml-${PLANTUML_VERSION}.jar"
+      - name: Validate diagrams
+        env:
+          PLANTUML_JAR: /tmp/plantuml.jar
+        run: |
+          printf '{"args":["--no-sandbox"]}' > /tmp/puppeteer.json
+          export PUPPETEER_CONFIG=/tmp/puppeteer.json
+          bash scripts/validate_diagrams.sh docs/diagrams
