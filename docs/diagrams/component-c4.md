@@ -6,15 +6,14 @@ C4 Level 3 component view of the `app/` modules and their relationships to exter
 flowchart TD
     subgraph "atlas-agent-runtime (app/)"
         direction TB
-        Runner["loop\nAgentRunner"]
-        Spec["agentspec\nAgentSpec (Pydantic)"]
+        Runner["loop/runner\nAgentRunner\n(caps inline: iterations | tokens | wall-time)"]
+        Errors["loop/errors\nCapBreachError\nToolNotAllowedError"]
+        Spec["agentspec/model\nAgentSpec (Pydantic)"]
         Registry["tools/registry\nToolRegistry\n(whitelist enforcement)"]
         Sanitize["tools/sanitize\nToolSanitizer\n(injection screen)"]
-        Persist["persistence\nDAL\nagent_runs / agent_steps"]
-        Telemetry["telemetry\nOTel spans\n(gen_ai.operation.name)"]
-        GWClient["gateway_client\nGatewayClient\n(HTTP /v1/chat/completions)"]
-        MCPClient["mcp_client\nMcpClient\n(mcp SDK)"]
-        Caps["loop/caps\nCapsEnforcer\n(iterations | tokens | wall-time)"]
+        Persist["persistence/dal\nDAL\nagent_runs / agent_steps"]
+        Telemetry["telemetry/tracing\nOTel spans\n(gen_ai.operation.name)"]
+        GWClient["loop/gateway_client\nGatewayClient\n(HTTP /v1/chat/completions)"]
     end
 
     subgraph "External"
@@ -27,16 +26,16 @@ flowchart TD
 
     YAML["Agent YAML\n(agent definition)"] -->|parsed by| Spec
     Spec -->|configures| Runner
-    Runner -->|enforces caps via| Caps
-    Runner -->|dispatches tool calls via| Registry
-    Registry -->|allowed call| MCPClient
-    Registry -->|rejected call| Runner
-    MCPClient -->|result| Sanitize
+    Runner -->|cap breach| Errors
+    Runner -->|whitelist check| Registry
+    Registry -->|allowed: dispatch via mcp SDK| DocSearch
+    Registry -->|allowed: dispatch via mcp SDK| Citations
+    Registry -->|rejected| Errors
+    DocSearch -->|result| Sanitize
+    Citations -->|result| Sanitize
     Sanitize -->|sanitized result| Runner
     Runner -->|LLM request| GWClient
     GWClient -->|POST /v1/chat/completions| Gateway
-    MCPClient -->|doc_search| DocSearch
-    MCPClient -->|verify_citation| Citations
     Runner -->|persist run + step| Persist
     Persist -->|SQL| PG
     Runner -->|emit span| Telemetry
