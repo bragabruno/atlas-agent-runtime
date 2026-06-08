@@ -1,0 +1,51 @@
+# atlas-agent-runtime/deploy/values-dev.yaml — dev overrides (atlas-docs/04 §4.2, §4.3).
+# One replica, small SKUs, plain Deployment (no canary/HPA/PDB) — the AKS dev
+# namespace loop (`make cloud-up ENV=dev` in atlas-infra).
+
+replicaCount: 1
+
+image:
+  pullPolicy: Always  # dev tags are mutable; always re-pull
+
+# Plain Deployment in dev — canary is a prod concern.
+canary:
+  enabled: false
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+env:
+  - name: OTEL_SEMCONV_STABILITY_OPT_IN
+    value: gen_ai_latest_experimental
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: http://$(HOST_IP):4317
+  - name: OTEL_SERVICE_NAME
+    value: atlas-agent-runtime
+  - name: HOST_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.hostIP
+  - name: ATLAS_GATEWAY_URL
+    value: "http://atlas-gateway.atlas-dev.svc:8000"
+  - name: ATLAS_MCP_DOC_SEARCH_URL
+    value: "http://atlas-mcp-doc-search.atlas-dev.svc:8000"
+  - name: ATLAS_MCP_CITATIONS_URL
+    value: "http://atlas-mcp-citations.atlas-dev.svc:8000"
+
+secrets:
+  keyVaultName: "kv-atlas-dev"
+  # tenantId / userAssignedIdentityID injected by Terraform output in CI.
+
+serviceMonitor:
+  enabled: false

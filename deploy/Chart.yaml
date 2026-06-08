@@ -1,0 +1,23 @@
+apiVersion: v2
+name: atlas-agent-runtime
+description: >-
+  Atlas hand-rolled asyncio agent loop with FastAPI trigger surface (ADR-020).
+  Executes YAML-defined agents against the Atlas Gateway and MCP tool servers;
+  persists runs to PostgreSQL; emits OTel GenAI spans. Per atlas-docs/04 §4.2:
+  probes, Key Vault CSI secrets, Workload Identity, Argo Rollouts canary.
+type: application
+# Chart version — bump on chart changes (independent of the app image tag).
+version: 0.1.0
+# Tracks the atlas-agent-runtime application version (pyproject [project].version).
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+sources:
+  - https://github.com/atlas-platform/atlas-agent-runtime
+maintainers:
+  - name: Atlas Platform Engineering
+keywords:
+  - agent
+  - asyncio
+  - fastapi
+  - opentelemetry
+  - argo-rollouts

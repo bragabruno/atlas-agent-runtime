@@ -64,8 +64,12 @@ class TestLoadRegdocYaml:
         assert spec.timeout_s == 60
 
     def test_system_prompt_ref(self) -> None:
+        # Robust against prompt-file renames in atlas-prompts (AGT-11 moved this
+        # from template.jinja → system.txt): assert the ref points under the
+        # regdoc-qa prompt dir AND resolves to a real file, not an exact literal.
         spec = load_spec(_REGDOC_YAML)
-        assert spec.system_prompt_ref == "prompts/regdoc-qa/1.0.0/template.jinja"
+        assert spec.system_prompt_ref.startswith("prompts/regdoc-qa/")
+        assert (_REPO_ROOT / "atlas-prompts" / spec.system_prompt_ref).exists()
 
 
 class TestInvalidSpecs:
