@@ -122,3 +122,6 @@ logs/
 
 # OTel local export
 otlp-export/
+
+# Trunk (machine-local linter cache — symlinks into ~/.cache/trunk)
+.trunk/
