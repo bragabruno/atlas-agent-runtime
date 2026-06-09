@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Atlas hand-rolled thin agent loop — asyncio engine for YAML-defined agents"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi==0.115.12",
+    "uvicorn==0.34.0",
     "sqlalchemy==2.0.50",
     "alembic==1.18.4",
     "psycopg[binary]==3.3.4",
@@ -34,6 +36,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Header", "fastapi.Query"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
