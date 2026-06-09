@@ -8,6 +8,25 @@ Runs structured agents (e.g. RegDoc Q&A) against the Atlas Gateway LLM API and a
 
 ---
 
+## Run Trigger Surface (HTTP)
+
+A run is started and polled over a thin FastAPI surface ([ADR-020](../atlas-docs/02-tech-stack-and-adrs.md)). The app factory is `create_app()` in `app/main.py`; serve it with:
+
+```bash
+uvicorn app.main:app
+```
+
+| Method & path | Body | Response |
+|---|---|---|
+| `POST /v1/agent/runs` | `{ "agent": <name>, "user_message": <str> }` | `202` `{ "run_id", "status" }` — starts the run in the background |
+| `GET /v1/agent/runs/{run_id}` | — | `200` `{ "run_id", "status", "result"|null, "error"|null }`; unknown id → `404` |
+
+`status` is one of `running`, `succeeded`, `failed` (the API projection of the persisted `agent_runs.status`). The offline default wires a Mock gateway client and an in-memory store, so the surface runs with no Postgres, network, or API keys. The published contract lives in [`openapi.json`](openapi.json) (regenerate with `python scripts/export_openapi.py`; the drift guard is `tests/test_openapi_contract.py`).
+
+Async Kafka invocation is deferred — the current surface is start + poll over HTTP only.
+
+---
+
 ## Agent Definition Schema (YAML)
 
 ```yaml
@@ -133,7 +152,7 @@ Spans follow the GenAI semantic conventions:
 ## Python Version & Dependencies
 
 - **Python**: 3.12
-- See `requirements.txt` for pinned versions. Key dependencies:
+- See `requirements.lock` for fully-pinned versions. Key dependencies:
   - `fastapi` + `uvicorn` (run-trigger surface — ADR-020)
   - `anthropic` / gateway HTTP client
   - `mcp` (official Python MCP SDK)
