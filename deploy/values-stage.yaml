@@ -1,0 +1,57 @@
+# atlas-agent-runtime/deploy/values-stage.yaml — stage overrides (atlas-docs/04 §4.2, §5.4).
+# Pre-prod: prod-like topology (canary, HPA, PDB) at reduced scale, for validation
+# before prod. Targets the atlas-stage namespace / kv-atlas-stage Key Vault.
+
+replicaCount: 2
+
+image:
+  pullPolicy: IfNotPresent
+
+# Argo Rollouts canary — stage validates the rollout path before prod. Steps and
+# analysis come from the chart defaults (10% → SLO check → 50% → SLO check).
+canary:
+  enabled: true
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "256Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+
+env:
+  - name: OTEL_SEMCONV_STABILITY_OPT_IN
+    value: gen_ai_latest_experimental
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: http://$(HOST_IP):4317
+  - name: OTEL_SERVICE_NAME
+    value: atlas-agent-runtime
+  - name: HOST_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.hostIP
+  - name: ATLAS_GATEWAY_URL
+    value: "http://atlas-gateway.atlas-stage.svc:8000"
+  - name: ATLAS_MCP_DOC_SEARCH_URL
+    value: "http://atlas-mcp-doc-search.atlas-stage.svc:8000"
+  - name: ATLAS_MCP_CITATIONS_URL
+    value: "http://atlas-mcp-citations.atlas-stage.svc:8000"
+
+secrets:
+  keyVaultName: "kv-atlas-stage"
+  # tenantId / userAssignedIdentityID injected by Terraform output in CI.
+
+serviceMonitor:
+  enabled: true

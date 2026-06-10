@@ -1,0 +1,57 @@
+# atlas-agent-runtime/deploy/values-prod.yaml — prod overrides (atlas-docs/04 §4.2, §5.4).
+# Argo Rollouts canary replaces the Deployment; HPA + PDB on; larger SKUs.
+# Targets the atlas-platform namespace / kv-atlas-prod Key Vault.
+
+replicaCount: 3
+
+image:
+  pullPolicy: IfNotPresent
+
+# Argo Rollouts canary (replaces the Deployment) — steps/analysis come from the
+# chart defaults (10% → SLO check → 50% → SLO check), no auto-promotion.
+canary:
+  enabled: true
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: 75
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "2000m"
+    memory: "2Gi"
+
+env:
+  - name: OTEL_SEMCONV_STABILITY_OPT_IN
+    value: gen_ai_latest_experimental
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: http://$(HOST_IP):4317
+  - name: OTEL_SERVICE_NAME
+    value: atlas-agent-runtime
+  - name: HOST_IP
+    valueFrom:
+      fieldRef:
+        fieldPath: status.hostIP
+  - name: ATLAS_GATEWAY_URL
+    value: "http://atlas-gateway.atlas-platform.svc:8000"
+  - name: ATLAS_MCP_DOC_SEARCH_URL
+    value: "http://atlas-mcp-doc-search.atlas-platform.svc:8000"
+  - name: ATLAS_MCP_CITATIONS_URL
+    value: "http://atlas-mcp-citations.atlas-platform.svc:8000"
+
+secrets:
+  keyVaultName: "kv-atlas-prod"
+  # tenantId / userAssignedIdentityID injected by Terraform output in CI.
+
+serviceMonitor:
+  enabled: true

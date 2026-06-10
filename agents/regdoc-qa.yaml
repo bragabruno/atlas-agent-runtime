@@ -1,0 +1,13 @@
+# RegDoc Q&A agent (AGT-11). Resolved by POST /v1/agent/runs?agent_name=regdoc-qa.
+# model_alias "mock" routes to the gateway's MockProvider in the local offline
+# loop (no provider keys → ADR-012); real envs set a provider-backed alias.
+agent_name: regdoc-qa
+agent_version: "1.0.0"
+system_prompt_ref: prompts/regdoc-qa/1.0.0/system.txt
+model_alias: mock
+tool_whitelist:
+  - doc_search
+  - verify_citation
+max_iterations: 8
+token_budget: 4096
+timeout_s: 60

@@ -60,17 +60,36 @@ Runs that hit a cap are persisted with `status = "capped"`.
 
 ```
 app/
-├── api/               # FastAPI trigger surface: POST /v1/agent/runs, GET /v1/agent/runs/{id} (ADR-020)
+├── api/               # FastAPI trigger surface: POST /v1/agent/runs, GET /v1/agent/runs/{id}, /healthz (ADR-020, AGT-16)
+├── main.py            # FastAPI composition root (uvicorn app.main:app --port 8000)
+├── config.py          # env-driven Settings (ATLAS_ prefix); persistence config-gated on ATLAS_DATABASE_URL
 ├── loop/              # AgentRunner — main asyncio run loop
 ├── agentspec/         # Pydantic model for YAML agent definitions (AgentSpec)
 ├── tools/
 │   ├── registry/      # ToolRegistry — whitelist enforcement; rejects unknown tools
 │   └── sanitize/      # ToolSanitizer — injection screen before result re-enters context
-├── persistence/       # SQLAlchemy models + DAL for agent_runs / agent_steps
+├── persistence/       # SQLAlchemy models + DAL + session factory for agent_runs / agent_steps
 ├── telemetry/         # OTel span instrumentation (gen_ai.operation.name, gen_ai.agent.name)
-├── gateway_client/    # HTTP client to the Atlas Gateway (/v1/chat/completions)
-└── mcp_client/        # MCP SDK client wrappers for mcp-doc-search and mcp-citations
+└── gateway_client/    # HttpGatewayClient — HTTP client to the Atlas Gateway (/v1/chat/completions)
 ```
+
+> **MCP tool execution** is intentionally outside the runner (tool calls are
+> whitelisted + sanitized but executed by the caller). A dedicated MCP client
+> (`app/mcp_client/`) lands when the agent loop is wired to execute tools
+> in-loop; the current trigger surface runs the loop against the gateway and
+> persists runs/steps.
+
+### Trigger surface (AGT-16)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/v1/agent/runs` | Run an agent (`{agent_name, user_message}`); returns final content + run id |
+| `GET` | `/v1/agent/runs/{id}` | Fetch a persisted run's status + steps (503 if no `ATLAS_DATABASE_URL`) |
+| `GET` | `/healthz` | Liveness |
+
+Agent specs are resolved from `ATLAS_AGENTS_DIR` (default `agents/`) as
+`<agent_name>.yaml`. With no provider keys the gateway serves `model=mock`, so
+`agents/regdoc-qa.yaml` runs end-to-end offline.
 
 ---
 
