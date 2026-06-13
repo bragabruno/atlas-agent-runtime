@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -19,7 +20,6 @@ from app.api.deps import gateway_client_dep, session_factory_dep
 from app.loop.gateway_client import LLMRequest, LLMResponse
 from app.main import app
 from app.persistence.session import create_all
-
 
 # ---------------------------------------------------------------------------
 # Fakes / fixtures
@@ -185,3 +185,40 @@ def test_cap_breach_persists_capped_status() -> None:
 
         get = client.get(f"/v1/agent/runs/{run_id}")
     assert get.json()["status"] == "capped"
+
+
+def test_upstream_429_maps_to_429() -> None:
+    class _Throttled:
+        async def chat(self, request: LLMRequest) -> LLMResponse:
+            req = httpx.Request("POST", "http://gw:8000/v1/chat/completions")
+            resp = httpx.Response(429, request=req)
+            raise httpx.HTTPStatusError("429", request=req, response=resp)
+
+    app.dependency_overrides[gateway_client_dep] = lambda: _Throttled()
+    app.dependency_overrides[session_factory_dep] = lambda: None
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/agent/runs",
+            json={"agent_name": "regdoc-qa", "user_message": "hi"},
+        )
+    assert resp.status_code == 429
+    assert "rate-limited" in resp.json()["detail"]
+
+
+def test_upstream_500_maps_to_502() -> None:
+    class _Broken:
+        async def chat(self, request: LLMRequest) -> LLMResponse:
+            req = httpx.Request("POST", "http://gw:8000/v1/chat/completions")
+            resp = httpx.Response(500, request=req)
+            raise httpx.HTTPStatusError("500", request=req, response=resp)
+
+    app.dependency_overrides[gateway_client_dep] = lambda: _Broken()
+    app.dependency_overrides[session_factory_dep] = lambda: None
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/agent/runs",
+            json={"agent_name": "regdoc-qa", "user_message": "hi"},
+        )
+    assert resp.status_code == 502

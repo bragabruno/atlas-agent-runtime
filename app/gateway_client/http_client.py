@@ -67,7 +67,9 @@ class HttpGatewayClient:
         url = f"{self._base_url}{_CHAT_PATH}"
 
         if self._client is not None:
-            resp = await self._client.post(url, json=payload, headers=headers, timeout=self._timeout)
+            resp = await self._client.post(
+                url, json=payload, headers=headers, timeout=self._timeout
+            )
         else:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(url, json=payload, headers=headers, timeout=self._timeout)

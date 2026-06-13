@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.agentspec.model import AgentSpec, load_spec
@@ -50,6 +51,25 @@ def _resolve_spec(settings: Settings, agent_name: str) -> AgentSpec:
     return load_spec(path)
 
 
+def _raise_for_upstream(exc: httpx.HTTPStatusError) -> NoReturn:
+    """Map an upstream gateway HTTP error onto an explicit response.
+
+    A gateway 429 (rate limit / budget) propagates as 429 so callers can back
+    off; anything else is a 502 — the run failed because of the upstream, not
+    this service. Without this mapping the raw httpx exception surfaced as an
+    opaque 500 (found under Locust load when the gateway throttled the shared
+    dev key).
+    """
+    status = exc.response.status_code
+    if status == 429:
+        raise HTTPException(
+            status_code=429, detail="upstream gateway rate-limited the run"
+        ) from exc
+    raise HTTPException(
+        status_code=502, detail=f"upstream gateway error: HTTP {status}"
+    ) from exc
+
+
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -72,6 +92,8 @@ async def create_run(
             result = await runner.run(user_message=body.user_message)
         except CapBreachError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except httpx.HTTPStatusError as exc:
+            _raise_for_upstream(exc)
         content = result.responses[-1].content if result.responses else ""
         return CreateRunResponse(
             run_id=None,
@@ -111,6 +133,9 @@ async def create_run(
         try:
             result = await runner.run(user_message=body.user_message)
             session.commit()
+        except httpx.HTTPStatusError as exc:
+            session.rollback()  # pyright: ignore[reportUnknownMemberType] — discard the pre-created run row
+            _raise_for_upstream(exc)
         except CapBreachError:
             # The runner persisted status=capped before re-raising.
             session.commit()
