@@ -13,6 +13,8 @@ what the offline dev loop needs.
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
 from app.loop.gateway_client import LLMRequest, LLMResponse
@@ -78,7 +80,7 @@ class HttpGatewayClient:
         return _to_llm_response(resp.json())
 
 
-def _to_llm_response(data: dict) -> LLMResponse:  # type: ignore[type-arg]
+def _to_llm_response(data: dict[str, Any]) -> LLMResponse:
     """Map an OpenAI-compatible chat-completion body to an `LLMResponse`.
 
     Fails fast (KeyError/IndexError) on a malformed body rather than silently

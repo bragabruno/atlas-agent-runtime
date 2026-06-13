@@ -14,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.persistence import tables as _tables  # noqa: F401 — register models on Base.metadata
+from app.persistence import tables as _tables  # noqa: F401  # pyright: ignore[reportUnusedImport]
 from app.persistence.base import Base
 
 

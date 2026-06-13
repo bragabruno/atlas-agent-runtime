@@ -25,6 +25,7 @@ from typing import Annotated, NoReturn
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.agentspec.model import AgentSpec, load_spec
 from app.api.deps import gateway_client_dep, session_factory_dep, settings_dep
@@ -65,9 +66,7 @@ def _raise_for_upstream(exc: httpx.HTTPStatusError) -> NoReturn:
         raise HTTPException(
             status_code=429, detail="upstream gateway rate-limited the run"
         ) from exc
-    raise HTTPException(
-        status_code=502, detail=f"upstream gateway error: HTTP {status}"
-    ) from exc
+    raise HTTPException(status_code=502, detail=f"upstream gateway error: HTTP {status}") from exc
 
 
 @router.get("/healthz")
@@ -80,7 +79,7 @@ async def create_run(
     body: CreateRunRequest,
     settings: Annotated[Settings, Depends(settings_dep)],
     gateway: Annotated[GatewayClient, Depends(gateway_client_dep)],
-    session_factory: Annotated[object, Depends(session_factory_dep)],
+    session_factory: Annotated[sessionmaker[Session] | None, Depends(session_factory_dep)],
 ) -> CreateRunResponse:
     spec = _resolve_spec(settings, body.agent_name)
     registry = ToolRegistry(spec)
@@ -112,7 +111,7 @@ async def create_run(
     from app.persistence.dal import create_run as dal_create_run
     from app.persistence.dal import get_run
 
-    session = session_factory()  # type: ignore[operator]
+    session = session_factory()
     try:
         run = dal_create_run(
             session,
@@ -134,7 +133,7 @@ async def create_run(
             result = await runner.run(user_message=body.user_message)
             session.commit()
         except httpx.HTTPStatusError as exc:
-            session.rollback()  # pyright: ignore[reportUnknownMemberType] — discard the pre-created run row
+            session.rollback()  # discard the pre-created run row
             _raise_for_upstream(exc)
         except CapBreachError:
             # The runner persisted status=capped before re-raising.
@@ -171,7 +170,7 @@ async def create_run(
 @router.get("/v1/agent/runs/{run_id}", response_model=RunStatusResponse)
 async def get_run_status(
     run_id: str,
-    session_factory: Annotated[object, Depends(session_factory_dep)],
+    session_factory: Annotated[sessionmaker[Session] | None, Depends(session_factory_dep)],
 ) -> RunStatusResponse:
     if session_factory is None:
         raise HTTPException(
@@ -185,7 +184,7 @@ async def get_run_status(
 
     from app.persistence.dal import get_run, list_steps
 
-    session = session_factory()  # type: ignore[operator]
+    session = session_factory()
     try:
         run = get_run(session, rid)
         if run is None:

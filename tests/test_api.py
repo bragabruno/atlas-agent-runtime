@@ -13,7 +13,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.deps import gateway_client_dep, session_factory_dep
@@ -51,7 +51,7 @@ _TOOL_LOOP = LLMResponse(
 )
 
 
-def _sqlite_factory() -> sessionmaker:  # type: ignore[type-arg]
+def _sqlite_factory() -> sessionmaker[Session]:
     """In-memory SQLite session factory (single shared connection)."""
     engine = create_engine(
         "sqlite://",
@@ -64,7 +64,7 @@ def _sqlite_factory() -> sessionmaker:  # type: ignore[type-arg]
 
 
 @pytest.fixture(autouse=True)
-def _clear_overrides() -> Iterator[None]:
+def clear_overrides() -> Iterator[None]:
     yield
     app.dependency_overrides.clear()
 

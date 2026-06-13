@@ -1,0 +1,55 @@
+# GitHub Actions CI — atlas-agent-runtime.
+#
+# No Makefile/scripts harness yet (see atlas-docs/07; only citations/infra/docs
+# have one), so this workflow runs the raw tools directly — the same
+# `ruff` / `pyright` / `pytest` invocations documented in CLAUDE.md. The offline
+# test suite fakes the gateway client + uses in-memory SQLite, so it needs no
+# services.
+#
+# Gate 1a (lint+typecheck): ruff lint, ruff format check, pyright (strict).
+# Gate 1b (test): offline pytest.
+#
+# All third-party actions are pinned to a commit SHA (supply-chain rule: no
+# floating refs; every pin verified >14 days old). The trailing comment records
+# the human-readable tag and release date each SHA corresponds to.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Gate 1a — Lint, Format & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 (2026-01-09)
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0 (2026-01-22)
+        with:
+          python-version: 3.12.13
+      - name: Install dev dependencies
+        run: pip install --quiet -e ".[dev]"
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format check
+        run: ruff format --check .
+      - name: Pyright (strict)
+        run: pyright
+
+  test:
+    name: Gate 1b — Unit Tests (offline)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 (2026-01-09)
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0 (2026-01-22)
+        with:
+          python-version: 3.12.13
+      - name: Install dev dependencies
+        run: pip install --quiet -e ".[dev]"
+      - name: Unit tests
+        run: pytest

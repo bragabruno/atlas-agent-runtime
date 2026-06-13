@@ -50,13 +50,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.agentspec.model import AgentSpec
 from app.loop.errors import CapBreachError
-from app.loop.gateway_client import LLMRequest, LLMResponse
+from app.loop.gateway_client import LLMResponse
 from app.loop.runner import AgentRunner, RunResult
-
 
 # ---------------------------------------------------------------------------
 # Fake gateway responses
 # ---------------------------------------------------------------------------
+
 
 def _cited_answer() -> LLMResponse:
     return LLMResponse(
@@ -113,7 +113,7 @@ _SPEC_TIGHT = AgentSpec(
     system_prompt_ref="prompts/regdoc-qa/1.0.0/system.txt",
     model_alias="claude-sonnet-4-6",
     tool_whitelist=["doc_search", "verify_citation"],
-    max_iterations=3,   # tight cap to trigger breach
+    max_iterations=3,  # tight cap to trigger breach
     token_budget=4096,
     timeout_s=60,
 )
@@ -143,22 +143,23 @@ class _CapturingTracer:
         def end(self) -> None:
             _SPANS.append({"name": self.name, **self._attrs})
 
-        def __enter__(self) -> "_CapturingTracer._Span":
+        def __enter__(self) -> _CapturingTracer._Span:
             return self
 
         def __exit__(self, *_: Any) -> None:
             self.end()
 
-    def start_span(self, name: str, **_kwargs: Any) -> "_CapturingTracer._Span":
+    def start_span(self, name: str, **_kwargs: Any) -> _CapturingTracer._Span:
         return self._Span(name)
 
-    def start_as_current_span(self, name: str, **_kwargs: Any) -> "_CapturingTracer._Span":
+    def start_as_current_span(self, name: str, **_kwargs: Any) -> _CapturingTracer._Span:
         return self._Span(name)
 
 
 # ---------------------------------------------------------------------------
 # Demo scenarios
 # ---------------------------------------------------------------------------
+
 
 async def _scenario_cited_answer() -> None:
     print("[SCENARIO 1] Cited answer ...")
@@ -181,9 +182,7 @@ async def _scenario_refusal() -> None:
     client.chat.return_value = _refusal()
 
     runner = AgentRunner(spec=_SPEC, client=client)
-    result: RunResult = await runner.run(
-        user_message="What is the capital of France?"
-    )
+    result: RunResult = await runner.run(user_message="What is the capital of France?")
     final = result.responses[-1].content if result.responses else "(no response)"
     print(f"Agent: {final}")
     print(f"Run completed: {result.iterations} iteration(s), {result.tokens_used} tokens")
