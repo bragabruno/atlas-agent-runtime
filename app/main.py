@@ -12,12 +12,58 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import FastAPI
 
 from app.api.routes import router
 from app.config import get_settings
 from app.gateway_client import HttpGatewayClient
+
+
+def _resolve_app_version() -> str:
+    # `pip install -e .` not run yet (e.g. `python -m app.main` from a clean
+    # checkout); fall through to the pyproject pin so the spec still renders.
+    try:
+        return version("atlas-agent-runtime")
+    except PackageNotFoundError:
+        return "0.1.0"
+
+
+_APP_VERSION = _resolve_app_version()
+
+_API_DESCRIPTION = """\
+The **Atlas Agent Runtime** is the FastAPI trigger surface (ADR-020) over the
+hand-rolled bounded agent loop (ADR-006). Runs are synchronous — the loop
+enforces hard iteration / token / wall-time caps from the agent's YAML spec
+so a request cannot block indefinitely.
+
+### Persistence (config-gated)
+With `ATLAS_DATABASE_URL` set, runs + steps are persisted and
+`GET /v1/agent/runs/{run_id}` returns their status. Without it, runs still
+execute (`POST` works) but `run_id` is `null` and `GET` returns 503.
+
+### Upstream errors
+The runtime calls the gateway over HTTP; gateway 429 propagates as 429,
+anything else upstream becomes 502.
+
+### Errors
+4xx/5xx responses use the `ErrorEnvelope` schema (`{detail, code?}`).
+"""
+
+_OPENAPI_TAGS = [
+    {
+        "name": "agent-runs",
+        "description": (
+            "Trigger and inspect agent runs. The bounded loop honors the caps "
+            "defined in the agent YAML spec (`agents/<agent_name>.yaml`)."
+        ),
+    },
+    {
+        "name": "health",
+        "description": "Liveness probe. Used by Kubernetes and the local-compose stack.",
+    },
+]
 
 
 @asynccontextmanager
@@ -46,5 +92,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.engine.dispose()
 
 
-app = FastAPI(title="Atlas Agent Runtime", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Atlas Agent Runtime",
+    version=_APP_VERSION,
+    description=_API_DESCRIPTION,
+    contact={"name": "Bruno Braga", "email": "contact@bragdev.com"},
+    license_info={"name": "Internal — Atlas (Enhesa mirror)"},
+    servers=[
+        {"url": "http://localhost:8083", "description": "Local debug (VS Code launcher)"},
+        {
+            "url": "http://atlas-agent-runtime.atlas-platform.svc:8000",
+            "description": "In-cluster (AKS)",
+        },
+    ],
+    openapi_tags=_OPENAPI_TAGS,
+    swagger_ui_parameters={
+        "displayRequestDuration": True,
+        "tryItOutEnabled": True,
+        "docExpansion": "list",
+    },
+    lifespan=lifespan,
+)
 app.include_router(router)

@@ -32,6 +32,7 @@ from app.api.deps import gateway_client_dep, session_factory_dep, settings_dep
 from app.api.schemas import (
     CreateRunRequest,
     CreateRunResponse,
+    ErrorEnvelope,
     RunStatusResponse,
     StepView,
 )
@@ -69,12 +70,49 @@ def _raise_for_upstream(exc: httpx.HTTPStatusError) -> NoReturn:
     raise HTTPException(status_code=502, detail=f"upstream gateway error: HTTP {status}") from exc
 
 
-@router.get("/healthz")
+@router.get(
+    "/healthz",
+    tags=["health"],
+    summary="Liveness probe",
+    description='Returns `{"status": "ok"}`. No dependencies; safe to poll.',
+    response_model=dict[str, str],
+)
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.post("/v1/agent/runs", response_model=CreateRunResponse, status_code=201)
+@router.post(
+    "/v1/agent/runs",
+    response_model=CreateRunResponse,
+    status_code=201,
+    tags=["agent-runs"],
+    summary="Trigger an agent run",
+    description=(
+        "Synchronously executes the bounded agent loop for the named agent and "
+        "returns its result. The agent spec (`agents/<agent_name>.yaml`) sets the "
+        "hard caps the loop enforces. When `ATLAS_DATABASE_URL` is set, the run "
+        "and every step are persisted and `run_id` is the UUID for the new row; "
+        "otherwise `run_id` is `null` (the run still executes)."
+    ),
+    responses={
+        404: {
+            "model": ErrorEnvelope,
+            "description": "Unknown agent — no matching YAML in `ATLAS_AGENTS_DIR`.",
+        },
+        422: {
+            "model": ErrorEnvelope,
+            "description": "Cap breach (iterations / tokens / wall-time) from the loop.",
+        },
+        429: {
+            "model": ErrorEnvelope,
+            "description": "Upstream gateway rate-limited or budget-exhausted.",
+        },
+        502: {
+            "model": ErrorEnvelope,
+            "description": "Upstream gateway returned a non-429 HTTP error.",
+        },
+    },
+)
 async def create_run(
     body: CreateRunRequest,
     settings: Annotated[Settings, Depends(settings_dep)],
@@ -167,7 +205,24 @@ async def create_run(
         session.close()
 
 
-@router.get("/v1/agent/runs/{run_id}", response_model=RunStatusResponse)
+@router.get(
+    "/v1/agent/runs/{run_id}",
+    response_model=RunStatusResponse,
+    tags=["agent-runs"],
+    summary="Get a persisted run's status",
+    description=(
+        "Returns the persisted run + its ordered steps. Only available when "
+        "`ATLAS_DATABASE_URL` is configured — otherwise this endpoint returns 503."
+    ),
+    responses={
+        400: {"model": ErrorEnvelope, "description": "`run_id` is not a valid UUID."},
+        404: {"model": ErrorEnvelope, "description": "No run with this id."},
+        503: {
+            "model": ErrorEnvelope,
+            "description": "Run persistence is not configured (`ATLAS_DATABASE_URL` unset).",
+        },
+    },
+)
 async def get_run_status(
     run_id: str,
     session_factory: Annotated[sessionmaker[Session] | None, Depends(session_factory_dep)],
