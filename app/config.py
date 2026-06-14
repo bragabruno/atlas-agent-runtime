@@ -13,11 +13,20 @@ Real deployments inject ``ATLAS_*`` per-env via the Key Vault CSI mount
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ATLAS_", env_file=".env", extra="ignore")
+
+    #: Deployment environment. Drives env-conditional defaults (today: gates
+    #: ``/docs`` + ``/openapi.json`` in prod; future: tighter CORS, debug
+    #: logs off). ``dev`` is the default so local runs / tests keep working
+    #: without any env-var changes; Helm values set ``ATLAS_ENVIRONMENT``
+    #: per environment.
+    environment: Literal["dev", "stage", "prod"] = "dev"
 
     #: Atlas Gateway base URL (OpenAI-compatible /v1/chat/completions).
     gateway_url: str = "http://localhost:8000"

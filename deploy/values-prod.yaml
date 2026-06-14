@@ -42,6 +42,8 @@ env:
     valueFrom:
       fieldRef:
         fieldPath: status.hostIP
+  - name: ATLAS_ENVIRONMENT
+    value: "prod"  # gates /docs, /redoc, /openapi.json off (app.config.Settings).
   - name: ATLAS_GATEWAY_URL
     value: "http://atlas-gateway.atlas-platform.svc:8000"
   - name: ATLAS_MCP_DOC_SEARCH_URL

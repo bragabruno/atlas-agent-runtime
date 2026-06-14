@@ -16,12 +16,33 @@ from typing import Any
 
 import pytest
 
-from app.main import app
+from app.config import Settings
+from app.main import app, create_app
 
 
 @pytest.fixture(scope="module")
 def spec() -> dict[str, Any]:
     return app.openapi()
+
+
+def test_docs_disabled_in_prod() -> None:
+    """`/docs`, `/redoc`, `/openapi.json` must be off when environment=prod.
+    `app.openapi()` (programmatic) still works — only the HTTP endpoints go away.
+    """
+    prod_app = create_app(Settings(environment="prod"))
+    assert prod_app.docs_url is None
+    assert prod_app.redoc_url is None
+    assert prod_app.openapi_url is None
+    # Programmatic spec is still available — drift + quality tests keep passing.
+    assert prod_app.openapi().get("info", {}).get("title") == "Atlas Agent Runtime"
+
+
+def test_docs_enabled_in_dev_and_stage() -> None:
+    """Dev keeps docs for local use; stage keeps them for QA. Only prod gates them."""
+    for env in ("dev", "stage"):
+        a = create_app(Settings(environment=env))  # type: ignore[arg-type]
+        assert a.docs_url == "/docs", f"docs_url disabled for environment={env}"
+        assert a.openapi_url == "/openapi.json", f"openapi_url disabled for environment={env}"
 
 
 def test_app_metadata_is_populated(spec: dict[str, Any]) -> None:

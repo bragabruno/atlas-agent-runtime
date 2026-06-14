@@ -36,6 +36,8 @@ env:
     valueFrom:
       fieldRef:
         fieldPath: status.hostIP
+  - name: ATLAS_ENVIRONMENT
+    value: "dev"  # default; set explicitly so deploy logs are unambiguous.
   - name: ATLAS_GATEWAY_URL
     value: "http://atlas-gateway.atlas-dev.svc:8000"
   - name: ATLAS_MCP_DOC_SEARCH_URL

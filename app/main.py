@@ -17,7 +17,7 @@ from importlib.metadata import PackageNotFoundError, version
 from fastapi import FastAPI
 
 from app.api.routes import router
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.gateway_client import HttpGatewayClient
 
 
@@ -92,25 +92,44 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.engine.dispose()
 
 
-app = FastAPI(
-    title="Atlas Agent Runtime",
-    version=_APP_VERSION,
-    description=_API_DESCRIPTION,
-    contact={"name": "Bruno Braga", "email": "contact@bragdev.com"},
-    license_info={"name": "Internal — Atlas (Enhesa mirror)"},
-    servers=[
-        {"url": "http://localhost:8083", "description": "Local debug (VS Code launcher)"},
-        {
-            "url": "http://atlas-agent-runtime.atlas-platform.svc:8000",
-            "description": "In-cluster (AKS)",
-        },
-    ],
-    openapi_tags=_OPENAPI_TAGS,
-    swagger_ui_parameters={
-        "displayRequestDuration": True,
-        "tryItOutEnabled": True,
-        "docExpansion": "list",
-    },
-    lifespan=lifespan,
-)
+def create_app(settings: Settings) -> FastAPI:
+    """Construct the FastAPI app for ``settings``.
+
+    Extracted from module scope so the docs gate (``environment != "prod"``)
+    is unit-testable without monkey-patching. Module-level ``app`` below
+    instantiates this with the runtime ``Settings()`` — production wiring
+    is unchanged.
+    """
+    docs_enabled = settings.environment != "prod"
+    return FastAPI(
+        title="Atlas Agent Runtime",
+        version=_APP_VERSION,
+        description=_API_DESCRIPTION,
+        contact={"name": "Bruno Braga", "email": "contact@bragdev.com"},
+        license_info={"name": "Internal — Atlas (Enhesa mirror)"},
+        servers=[
+            {"url": "http://localhost:8083", "description": "Local debug (VS Code launcher)"},
+            {
+                "url": "http://atlas-agent-runtime.atlas-platform.svc:8000",
+                "description": "In-cluster (AKS)",
+            },
+        ],
+        openapi_tags=_OPENAPI_TAGS,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+        swagger_ui_parameters=(
+            {
+                "displayRequestDuration": True,
+                "tryItOutEnabled": True,
+                "docExpansion": "list",
+            }
+            if docs_enabled
+            else None
+        ),
+        lifespan=lifespan,
+    )
+
+
+app = create_app(get_settings())
 app.include_router(router)
