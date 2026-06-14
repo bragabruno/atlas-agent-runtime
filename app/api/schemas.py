@@ -28,14 +28,19 @@ class CreateRunRequest(BaseModel):
     agent_name: str = Field(
         ...,
         min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
         description=(
             "Name of the agent YAML spec to run — resolved as "
-            "`<ATLAS_AGENTS_DIR>/<agent_name>.yaml`. Returns 404 if not found."
+            "`<ATLAS_AGENTS_DIR>/<agent_name>.yaml`. Strict kebab-case "
+            "(`[a-z0-9]+(-[a-z0-9]+)*`); path separators and `..` are rejected "
+            "at the schema layer. Returns 404 if no matching YAML exists."
         ),
     )
     user_message: str = Field(
         ...,
         min_length=1,
+        max_length=32_000,
         description="The user's question/instruction passed to the agent loop.",
     )
 

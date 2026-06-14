@@ -53,6 +53,21 @@ def test_every_operation_has_summary_description_and_tag(spec: dict[str, Any]) -
     assert not missing, "operations missing metadata:\n  " + "\n  ".join(missing)
 
 
+def test_agent_name_has_traversal_pattern(spec: dict[str, Any]) -> None:
+    """`CreateRunRequest.agent_name` must publish a non-empty `pattern` so the
+    schema layer rejects path-separator / `..` payloads before the route runs.
+    Catches accidental constraint drops in future edits to the schema field.
+    """
+    schemas = spec.get("components", {}).get("schemas", {})
+    field = schemas.get("CreateRunRequest", {}).get("properties", {}).get("agent_name", {})
+    pattern = field.get("pattern")
+    assert pattern, "CreateRunRequest.agent_name is missing a `pattern` (traversal defense)"
+    assert pattern.startswith("^") and pattern.endswith("$"), (
+        f"agent_name pattern must be anchored (`^…$`), got: {pattern!r}"
+    )
+    assert field.get("maxLength"), "agent_name must declare maxLength"
+
+
 def test_error_responses_reference_error_envelope(spec: dict[str, Any]) -> None:
     """4xx/5xx responses we author should point at ErrorEnvelope so codegen types them.
 

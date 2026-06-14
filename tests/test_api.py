@@ -7,7 +7,9 @@ persistence-off paths plus error cases.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import httpx
 import pytest
@@ -16,7 +18,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api.deps import gateway_client_dep, session_factory_dep
+from app.api.deps import gateway_client_dep, session_factory_dep, settings_dep
+from app.config import Settings
 from app.loop.gateway_client import LLMRequest, LLMResponse
 from app.main import app
 from app.persistence.session import create_all
@@ -129,7 +132,12 @@ def test_create_run_with_persistence_then_get() -> None:
     assert data["steps"][0]["type"] == "llm_call"
 
 
-def test_unknown_agent_returns_404() -> None:
+def test_unknown_agent_returns_404_with_fixed_detail() -> None:
+    """Valid kebab-case name with no matching YAML → 404 + fixed detail.
+
+    Detail is fixed (no input echo) so an attacker cannot use the 404 message
+    to probe which schema-permitted strings correspond to filesystem entries.
+    """
     app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_CITED)
     app.dependency_overrides[session_factory_dep] = lambda: None
 
@@ -139,7 +147,88 @@ def test_unknown_agent_returns_404() -> None:
             json={"agent_name": "does-not-exist", "user_message": "hi"},
         )
     assert resp.status_code == 404
-    assert "unknown agent" in resp.json()["detail"]
+    assert resp.json()["detail"] == "agent not found"
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "../foo",  # parent traversal
+        "../../etc/passwd",  # deep traversal
+        "foo/bar",  # path separator
+        "foo.bar",  # dot in name
+        "/absolute/path",  # absolute
+        "FOO",  # uppercase
+        "-leading-hyphen",
+        "trailing-hyphen-",
+        "double--hyphen",
+        "",  # empty
+        "a" * 65,  # exceeds max_length
+    ],
+)
+def test_agent_name_pattern_rejects_traversal_and_invalid_chars(bad_name: str) -> None:
+    """Defense layer 1: Pydantic regex rejects bad names with 422 before the route runs."""
+    app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_CITED)
+    app.dependency_overrides[session_factory_dep] = lambda: None
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/agent/runs",
+            json={"agent_name": bad_name, "user_message": "hi"},
+        )
+    assert resp.status_code == 422, f"expected 422 for {bad_name!r}, got {resp.status_code}"
+
+
+def test_resolve_spec_anchor_blocks_symlink_escape(tmp_path: Path) -> None:
+    """Defense layer 2: even if a kebab name matches a symlink that escapes the
+    agents dir, ``Path.resolve().is_relative_to()`` catches it and returns 404.
+
+    Constructs a fresh ``agents_dir`` in tmp_path, drops one legit YAML, and
+    plants a symlink ``escape.yaml`` whose target is outside the dir. A kebab
+    name ``escape`` passes the regex but must not load the outside file.
+    """
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+
+    # Minimal legit spec the regex+anchor would happily load.
+    (agents_dir / "regdoc-qa.yaml").write_text(
+        "agent_name: regdoc-qa\n"
+        "agent_version: 1.0.0\n"
+        "system_prompt_ref: prompts/regdoc.txt\n"
+        "model_alias: mock\n"
+        "tool_whitelist: []\n"
+        "max_iterations: 1\n"
+        "token_budget: 100\n"
+        "timeout_s: 5\n",
+        encoding="utf-8",
+    )
+
+    # Plant the escape: symlink inside agents_dir → file outside the dir.
+    outside = tmp_path / "outside.yaml"
+    outside.write_text(
+        "agent_name: pwned\n"
+        "agent_version: 9.9.9\n"
+        "system_prompt_ref: /etc/passwd\n"
+        "model_alias: attacker\n"
+        "tool_whitelist: []\n"
+        "max_iterations: 999\n"
+        "token_budget: 999999\n"
+        "timeout_s: 999\n",
+        encoding="utf-8",
+    )
+    os.symlink(outside, agents_dir / "escape.yaml")
+
+    app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_CITED)
+    app.dependency_overrides[session_factory_dep] = lambda: None
+    app.dependency_overrides[settings_dep] = lambda: Settings(agents_dir=str(agents_dir))
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/agent/runs",
+            json={"agent_name": "escape", "user_message": "hi"},
+        )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "agent not found"
 
 
 def test_get_run_not_found() -> None:

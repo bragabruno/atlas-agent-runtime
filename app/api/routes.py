@@ -46,11 +46,19 @@ router = APIRouter()
 
 
 def _resolve_spec(settings: Settings, agent_name: str) -> AgentSpec:
-    """Load the agent spec for *agent_name*, or 404 if there is no such YAML."""
-    path = Path(settings.agents_dir) / f"{agent_name}.yaml"
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail=f"unknown agent: {agent_name}")
-    return load_spec(path)
+    """Load the agent spec for *agent_name*, or 404 if there is no such YAML.
+
+    The path is anchored to ``settings.agents_dir`` after symlink resolution so
+    that ``agent_name`` cannot escape the directory (defense in depth on top of
+    the schema-layer regex that already rejects path separators and ``..``).
+    The 404 detail is fixed — echoing ``agent_name`` would let an attacker probe
+    the filesystem via the schema-permitted character set.
+    """
+    base = Path(settings.agents_dir).resolve()
+    candidate = (base / f"{agent_name}.yaml").resolve()
+    if not candidate.is_relative_to(base) or not candidate.is_file():
+        raise HTTPException(status_code=404, detail="agent not found")
+    return load_spec(candidate)
 
 
 def _raise_for_upstream(exc: httpx.HTTPStatusError) -> NoReturn:

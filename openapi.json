@@ -9,13 +9,16 @@
         },
         "properties": {
           "agent_name": {
-            "description": "Name of the agent YAML spec to run — resolved as `<ATLAS_AGENTS_DIR>/<agent_name>.yaml`. Returns 404 if not found.",
+            "description": "Name of the agent YAML spec to run — resolved as `<ATLAS_AGENTS_DIR>/<agent_name>.yaml`. Strict kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`); path separators and `..` are rejected at the schema layer. Returns 404 if no matching YAML exists.",
+            "maxLength": 64,
             "minLength": 1,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
             "title": "Agent Name",
             "type": "string"
           },
           "user_message": {
             "description": "The user's question/instruction passed to the agent loop.",
+            "maxLength": 32000,
             "minLength": 1,
             "title": "User Message",
             "type": "string"
