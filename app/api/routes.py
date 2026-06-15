@@ -120,7 +120,13 @@ async def healthz() -> dict[str, str]:
         },
         422: {
             "model": ErrorEnvelope,
-            "description": "Cap breach (iterations / tokens / wall-time) from the loop.",
+            "description": (
+                "Two distinct shapes share this status. The route's own cap breach "
+                "(iterations / tokens / wall-time) from the loop returns an "
+                "`ErrorEnvelope` with a string `detail`. FastAPI's request-body "
+                "validation also returns 422, but with its own `HTTPValidationError` "
+                "body where `detail` is a list of error objects — not an `ErrorEnvelope`."
+            ),
         },
         429: {
             "model": ErrorEnvelope,

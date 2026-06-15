@@ -94,6 +94,10 @@
           },
           "status": {
             "description": "Terminal run status — `completed` or `capped` (hit a hard cap).",
+            "enum": [
+              "completed",
+              "capped"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -218,7 +222,14 @@
             "type": "string"
           },
           "status": {
-            "description": "Run status — `running`, `completed`, `capped`, `failed`.",
+            "description": "Run status — `created`, `running`, `completed`, `failed`, or `capped`.",
+            "enum": [
+              "created",
+              "running",
+              "completed",
+              "failed",
+              "capped"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -286,7 +297,11 @@
             "type": "integer"
           },
           "type": {
-            "description": "Step type — `llm`, `tool`, `system`.",
+            "description": "Step type — `llm_call` or `tool_call`.",
+            "enum": [
+              "llm_call",
+              "tool_call"
+            ],
             "title": "Type",
             "type": "string"
           }
@@ -437,7 +452,7 @@
                 }
               }
             },
-            "description": "Cap breach (iterations / tokens / wall-time) from the loop."
+            "description": "Two distinct shapes share this status. The route's own cap breach (iterations / tokens / wall-time) from the loop returns an `ErrorEnvelope` with a string `detail`. FastAPI's request-body validation also returns 422, but with its own `HTTPValidationError` body where `detail` is a list of error objects — not an `ErrorEnvelope`."
           },
           "429": {
             "content": {
