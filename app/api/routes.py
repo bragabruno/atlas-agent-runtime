@@ -41,6 +41,7 @@ from app.loop.errors import CapBreachError
 from app.loop.gateway_client import GatewayClient
 from app.loop.runner import AgentRunner
 from app.tools.registry.registry import ToolRegistry
+from app.tools.sanitize.sanitizer import ToolSanitizer
 
 router = APIRouter()
 
@@ -129,10 +130,11 @@ async def create_run(
 ) -> CreateRunResponse:
     spec = _resolve_spec(settings, body.agent_name)
     registry = ToolRegistry(spec)
+    sanitizer = ToolSanitizer()
 
     # --- No persistence configured: run and return, run_id is null. ---
     if session_factory is None:
-        runner = AgentRunner(spec=spec, client=gateway, registry=registry)
+        runner = AgentRunner(spec=spec, client=gateway, registry=registry, sanitizer=sanitizer)
         try:
             result = await runner.run(user_message=body.user_message)
         except CapBreachError as exc:
@@ -172,6 +174,7 @@ async def create_run(
             spec=spec,
             client=gateway,
             registry=registry,
+            sanitizer=sanitizer,
             session=session,
             resume_run_id=run_id,
         )
