@@ -25,6 +25,11 @@ _REPO_ROOT = Path(__file__).parent.parent.parent  # Developer-local/Atlas
 _REGDOC_YAML = _REPO_ROOT / "atlas-prompts" / "agents" / "regdoc-qa.yaml"
 
 
+@pytest.mark.skipif(
+    not _REGDOC_YAML.exists(),
+    reason="cross-repo consistency check: sibling atlas-prompts not checked out "
+    "(single-repo CI); runs in the full workspace.",
+)
 class TestLoadRegdocYaml:
     """regdoc-qa.yaml must load and validate without error."""
 
