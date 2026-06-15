@@ -160,6 +160,10 @@ class TestLoadSpecHelpers:
         with pytest.raises((ValueError, ValidationError)):
             load_spec(p)
 
+    @pytest.mark.skipif(
+        not _REGDOC_YAML.exists(),
+        reason="needs the sibling atlas-prompts regdoc-qa.yaml (absent in single-repo CI).",
+    )
     def test_accepts_path_as_string(self) -> None:
         spec = load_spec(str(_REGDOC_YAML))
         assert spec.agent_name == "regdoc-qa"
