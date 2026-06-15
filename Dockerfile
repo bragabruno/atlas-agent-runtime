@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# atlas-agent-runtime image — multi-stage, non-root, pinned base.
+# atlas-agent-runtime runtime image — multi-stage, non-root, pinned base.
 # Base pinned exactly (atlas-docs/02 §2), matching the CI image. Runtime deps are
 # the exact-pinned [project.dependencies] from pyproject.toml (no dev deps).
 
@@ -28,6 +28,7 @@ USER app
 EXPOSE 8000
 # FastAPI trigger surface (ADR-020) served by uvicorn on :8000. Config is
 # env-driven (ATLAS_ prefix). With no ATLAS_DATABASE_URL the service still serves
-# runs (persistence off). The image ships no secrets; real deployments inject
-# ATLAS_* via the Key Vault CSI mount (atlas-docs/04).
+# runs (persistence off). The deploy/ chart's probes (/healthz on :8000) expect
+# this command. The image ships no secrets; real deployments inject ATLAS_* via
+# the Key Vault CSI mount (atlas-docs/04).
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,86 +1,10 @@
 {
   "components": {
     "schemas": {
-      "CreateRunRequest": {
-        "description": "Body for ``POST /v1/agent/runs``.",
-        "example": {
-          "agent_name": "regdoc-qa",
-          "user_message": "What does REACH say about DEHP authorisation?"
-        },
+      "AgentRunResponse": {
+        "description": "Response for both the start (202) and the poll (200) endpoints.\n\nOn start, ``result``/``error`` are ``null`` and ``status`` is ``running``.\nOn poll, a terminal run carries either ``result`` (succeeded) or ``error``\n(failed); both stay ``null`` while still ``running``.",
         "properties": {
-          "agent_name": {
-            "description": "Name of the agent YAML spec to run — resolved as `<ATLAS_AGENTS_DIR>/<agent_name>.yaml`. Strict kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`); path separators and `..` are rejected at the schema layer. Returns 404 if no matching YAML exists.",
-            "maxLength": 64,
-            "minLength": 1,
-            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-            "title": "Agent Name",
-            "type": "string"
-          },
-          "user_message": {
-            "description": "The user's question/instruction passed to the agent loop.",
-            "maxLength": 32000,
-            "minLength": 1,
-            "title": "User Message",
-            "type": "string"
-          }
-        },
-        "required": [
-          "agent_name",
-          "user_message"
-        ],
-        "title": "CreateRunRequest",
-        "type": "object"
-      },
-      "CreateRunResponse": {
-        "description": "Result of a triggered run.\n\nThe run is executed synchronously (the mock gateway completes in one\niteration); ``run_id`` is ``None`` only when persistence is disabled\n(no ``ATLAS_DATABASE_URL``).",
-        "example": {
-          "agent_name": "regdoc-qa",
-          "agent_version": "0.1.0",
-          "content": "DEHP requires authorisation under REACH Annex XIV …",
-          "elapsed_s": 0.382,
-          "iterations": 1,
-          "responses": [
-            "DEHP requires authorisation under REACH Annex XIV …"
-          ],
-          "run_id": "9f7d2c1e-0b2a-4f1e-9c8a-1234567890ab",
-          "status": "completed",
-          "tokens_used": 142
-        },
-        "properties": {
-          "agent_name": {
-            "description": "Agent name from the resolved YAML spec.",
-            "title": "Agent Name",
-            "type": "string"
-          },
-          "agent_version": {
-            "description": "Agent version from the resolved YAML spec.",
-            "title": "Agent Version",
-            "type": "string"
-          },
-          "content": {
-            "description": "Final assistant message content.",
-            "title": "Content",
-            "type": "string"
-          },
-          "elapsed_s": {
-            "description": "Wall-clock seconds for the run.",
-            "title": "Elapsed S",
-            "type": "number"
-          },
-          "iterations": {
-            "description": "Number of loop iterations executed.",
-            "title": "Iterations",
-            "type": "integer"
-          },
-          "responses": {
-            "description": "All assistant turn contents in order (length = iterations).",
-            "items": {
-              "type": "string"
-            },
-            "title": "Responses",
-            "type": "array"
-          },
-          "run_id": {
+          "error": {
             "anyOf": [
               {
                 "type": "string"
@@ -89,66 +13,36 @@
                 "type": "null"
               }
             ],
-            "description": "Persistent run id (UUID) when `ATLAS_DATABASE_URL` is set; `null` when persistence is disabled (the run still executed).",
-            "title": "Run Id"
+            "description": "Explicit failure reason when failed",
+            "title": "Error"
           },
-          "status": {
-            "description": "Terminal run status — `completed` or `capped` (hit a hard cap).",
-            "enum": [
-              "completed",
-              "capped"
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Status",
+            "description": "Final agent answer when succeeded",
+            "title": "Result"
+          },
+          "run_id": {
+            "description": "Server-generated run identifier (UUID)",
+            "title": "Run Id",
             "type": "string"
           },
-          "tokens_used": {
-            "description": "Total tokens consumed across the run.",
-            "title": "Tokens Used",
-            "type": "integer"
+          "status": {
+            "$ref": "#/components/schemas/RunStatus",
+            "description": "Current lifecycle status"
           }
         },
         "required": [
           "run_id",
-          "agent_name",
-          "agent_version",
-          "status",
-          "iterations",
-          "tokens_used",
-          "elapsed_s",
-          "content"
+          "status"
         ],
-        "title": "CreateRunResponse",
-        "type": "object"
-      },
-      "ErrorEnvelope": {
-        "description": "Typed error body for non-2xx responses.\n\nFastAPI's default HTTPException emits `{\"detail\": ...}`. This envelope is\nthe documented superset so codegen produces a single typed error model\n(mirrors the gateway's `ErrorEnvelope`).",
-        "example": {
-          "code": "not_found",
-          "detail": "run not found"
-        },
-        "properties": {
-          "code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Optional machine-readable error code.",
-            "title": "Code"
-          },
-          "detail": {
-            "description": "Human-readable error message.",
-            "title": "Detail",
-            "type": "string"
-          }
-        },
-        "required": [
-          "detail"
-        ],
-        "title": "ErrorEnvelope",
+        "title": "AgentRunResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -164,156 +58,40 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
-      "RunStatusResponse": {
-        "description": "Persisted run state for ``GET /v1/agent/runs/{run_id}``.",
-        "example": {
-          "agent_name": "regdoc-qa",
-          "agent_version": "0.1.0",
-          "ended_at": "2026-06-13T10:00:00.382+00:00",
-          "run_id": "9f7d2c1e-0b2a-4f1e-9c8a-1234567890ab",
-          "started_at": "2026-06-13T10:00:00+00:00",
-          "status": "completed",
-          "steps": [
-            {
-              "idx": 0,
-              "latency_ms": 382,
-              "payload": {
-                "finish_reason": "stop",
-                "model": "mock"
-              },
-              "tokens": 142,
-              "type": "llm"
-            }
-          ],
-          "token_budget": 8192,
-          "tokens_used": 142
-        },
-        "properties": {
-          "agent_name": {
-            "description": "Agent name from the YAML spec.",
-            "title": "Agent Name",
-            "type": "string"
-          },
-          "agent_version": {
-            "description": "Agent version from the YAML spec.",
-            "title": "Agent Version",
-            "type": "string"
-          },
-          "ended_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "ISO-8601 UTC timestamp when the run ended; `null` while running.",
-            "title": "Ended At"
-          },
-          "run_id": {
-            "description": "Persistent run id (UUID).",
-            "title": "Run Id",
-            "type": "string"
-          },
-          "started_at": {
-            "description": "ISO-8601 UTC timestamp when the run started.",
-            "title": "Started At",
-            "type": "string"
-          },
-          "status": {
-            "description": "Run status — `created`, `running`, `completed`, `failed`, or `capped`.",
-            "enum": [
-              "created",
-              "running",
-              "completed",
-              "failed",
-              "capped"
-            ],
-            "title": "Status",
-            "type": "string"
-          },
-          "steps": {
-            "description": "Persisted steps in execution order.",
-            "items": {
-              "$ref": "#/components/schemas/StepView"
-            },
-            "title": "Steps",
-            "type": "array"
-          },
-          "token_budget": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Cap from the agent spec, or `null` if no cap is defined.",
-            "title": "Token Budget"
-          },
-          "tokens_used": {
-            "description": "Tokens consumed so far / at completion.",
-            "title": "Tokens Used",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "run_id",
-          "agent_name",
-          "agent_version",
-          "status",
-          "token_budget",
-          "tokens_used",
-          "started_at",
-          "ended_at"
+      "RunStatus": {
+        "description": "API-facing run status returned to polling clients.\n\nProjection of `app.persistence.tables.AgentStatusEnum`:\n``created``/``running`` → ``running``; ``completed`` → ``succeeded``;\n``failed``/``capped`` → ``failed``.",
+        "enum": [
+          "running",
+          "succeeded",
+          "failed"
         ],
-        "title": "RunStatusResponse",
-        "type": "object"
+        "title": "RunStatus",
+        "type": "string"
       },
-      "StepView": {
-        "description": "One persisted step within a run.",
+      "StartAgentRunRequest": {
+        "additionalProperties": false,
+        "description": "Body of ``POST /v1/agent/runs`` — start a run for a named agent.",
         "properties": {
-          "idx": {
-            "description": "Zero-based step index within the run.",
-            "title": "Idx",
-            "type": "integer"
+          "agent": {
+            "description": "Agent name/id to run — resolved as ``<agents_dir>/<agent>.yaml``. Strict kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`); path separators and `..` are rejected at the schema layer (defense-in-depth on top of the loader's path anchoring). Returns 422 if no matching spec exists.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "title": "Agent",
+            "type": "string"
           },
-          "latency_ms": {
-            "description": "Step latency in milliseconds.",
-            "title": "Latency Ms",
-            "type": "integer"
-          },
-          "payload": {
-            "additionalProperties": true,
-            "description": "JSON payload mirroring the persisted agent step record.",
-            "title": "Payload",
-            "type": "object"
-          },
-          "tokens": {
-            "description": "Tokens consumed by this step.",
-            "title": "Tokens",
-            "type": "integer"
-          },
-          "type": {
-            "description": "Step type — `llm_call` or `tool_call`.",
-            "enum": [
-              "llm_call",
-              "tool_call"
-            ],
-            "title": "Type",
+          "user_message": {
+            "description": "The user's input for the run",
+            "minLength": 1,
+            "title": "User Message",
             "type": "string"
           }
         },
         "required": [
-          "idx",
-          "type",
-          "tokens",
-          "latency_ms",
-          "payload"
+          "agent",
+          "user_message"
         ],
-        "title": "StepView",
+        "title": "StartAgentRunRequest",
         "type": "object"
       },
       "ValidationError": {
@@ -364,7 +142,7 @@
       "email": "contact@bragdev.com",
       "name": "Bruno Braga"
     },
-    "description": "The **Atlas Agent Runtime** is the FastAPI trigger surface (ADR-020) over the\nhand-rolled bounded agent loop (ADR-006). Runs are synchronous — the loop\nenforces hard iteration / token / wall-time caps from the agent's YAML spec\nso a request cannot block indefinitely.\n\n### Persistence (config-gated)\nWith `ATLAS_DATABASE_URL` set, runs + steps are persisted and\n`GET /v1/agent/runs/{run_id}` returns their status. Without it, runs still\nexecute (`POST` works) but `run_id` is `null` and `GET` returns 503.\n\n### Upstream errors\nThe runtime calls the gateway over HTTP; gateway 429 propagates as 429,\nanything else upstream becomes 502.\n\n### Errors\n4xx/5xx responses use the `ErrorEnvelope` schema (`{detail, code?}`).\n",
+    "description": "The **Atlas Agent Runtime** is the FastAPI trigger surface (ADR-020) over the\nhand-rolled bounded agent loop (ADR-006). A run is started with\n`POST /v1/agent/runs` (returns `202` immediately) and polled with\n`GET /v1/agent/runs/{run_id}`; the loop enforces hard iteration / token /\nwall-time caps from the agent's YAML spec so a run cannot block indefinitely.\n\n### Auth\nBoth trigger routes require `Authorization: Bearer <key>` (BRA-878); `/healthz`\nstays open. The local/compose default key is `dev-key`.\n\n### Status vocabulary\n`status` is the API projection of the persisted run state: `running` while in\nflight, `succeeded` on natural completion, `failed` on a cap breach or any\nother error.\n",
     "license": {
       "name": "Internal — Atlas (Enhesa mirror)"
     },
@@ -375,7 +153,7 @@
   "paths": {
     "/healthz": {
       "get": {
-        "description": "Returns `{\"status\": \"ok\"}`. No dependencies; safe to poll.",
+        "description": "Liveness probe — returns a static OK payload. No auth, no dependencies.",
         "operationId": "healthz_healthz_get",
         "responses": {
           "200": {
@@ -401,78 +179,38 @@
     },
     "/v1/agent/runs": {
       "post": {
-        "description": "Synchronously executes the bounded agent loop for the named agent and returns its result. The agent spec (`agents/<agent_name>.yaml`) sets the hard caps the loop enforces. When `ATLAS_DATABASE_URL` is set, the run and every step are persisted and `run_id` is the UUID for the new row; otherwise `run_id` is `null` (the run still executes).",
-        "operationId": "create_run_v1_agent_runs_post",
+        "description": "Start a run for ``req.agent`` and return its ``run_id`` (202).",
+        "operationId": "start_agent_run_v1_agent_runs_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CreateRunRequest"
+                "$ref": "#/components/schemas/StartAgentRunRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "201": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CreateRunResponse"
+                  "$ref": "#/components/schemas/AgentRunResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Missing or invalid bearer key (`Authorization: Bearer <key>`)."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Unknown agent — no matching YAML in `ATLAS_AGENTS_DIR`."
-          },
           "422": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             },
-            "description": "Two distinct shapes share this status. The route's own cap breach (iterations / tokens / wall-time) from the loop returns an `ErrorEnvelope` with a string `detail`. FastAPI's request-body validation also returns 422, but with its own `HTTPValidationError` body where `detail` is a list of error objects — not an `ErrorEnvelope`."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Upstream gateway rate-limited or budget-exhausted."
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Upstream gateway returned a non-429 HTTP error."
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -480,7 +218,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Trigger an agent run",
+        "summary": "Start an agent run",
         "tags": [
           "agent-runs"
         ]
@@ -488,8 +226,8 @@
     },
     "/v1/agent/runs/{run_id}": {
       "get": {
-        "description": "Returns the persisted run + its ordered steps. Only available when `ATLAS_DATABASE_URL` is configured — otherwise this endpoint returns 503.",
-        "operationId": "get_run_status_v1_agent_runs__run_id__get",
+        "description": "Poll a run by id; unknown id → 404.",
+        "operationId": "get_agent_run_v1_agent_runs__run_id__get",
         "parameters": [
           {
             "in": "path",
@@ -506,41 +244,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RunStatusResponse"
+                  "$ref": "#/components/schemas/AgentRunResponse"
                 }
               }
             },
             "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "`run_id` is not a valid UUID."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Missing or invalid bearer key (`Authorization: Bearer <key>`)."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "No run with this id."
           },
           "422": {
             "content": {
@@ -551,16 +259,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            },
-            "description": "Run persistence is not configured (`ATLAS_DATABASE_URL` unset)."
           }
         },
         "security": [
@@ -568,7 +266,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Get a persisted run's status",
+        "summary": "Poll an agent run",
         "tags": [
           "agent-runs"
         ]
@@ -587,7 +285,7 @@
   ],
   "tags": [
     {
-      "description": "Trigger and inspect agent runs. The bounded loop honors the caps defined in the agent YAML spec (`agents/<agent_name>.yaml`).",
+      "description": "Trigger and poll agent runs. The bounded loop honors the caps defined in the agent YAML spec (`<agents_dir>/<agent>.yaml`).",
       "name": "agent-runs"
     },
     {

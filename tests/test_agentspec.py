@@ -20,16 +20,15 @@ from pydantic import ValidationError
 
 from app.agentspec import AgentSpec, load_spec
 
-# Path to the real atlas-prompts agent YAML — resolved relative to this file.
-_REPO_ROOT = Path(__file__).parent.parent.parent  # Developer-local/Atlas
-_REGDOC_YAML = _REPO_ROOT / "atlas-prompts" / "agents" / "regdoc-qa.yaml"
+# Vendored fixture mirroring atlas-prompts' regdoc-qa agent spec (YAML + the
+# referenced system prompt). These tests exercise the AgentSpec loader/schema in
+# isolation; verifying the *canonical* atlas-prompts file conforms is that repo's
+# own schema-lint gate. Keeping the fixture in-repo preserves polyrepo isolation —
+# CI must not depend on a sibling checkout.
+_FIXTURES = Path(__file__).parent / "fixtures"
+_REGDOC_YAML = _FIXTURES / "regdoc-qa.yaml"
 
 
-@pytest.mark.skipif(
-    not _REGDOC_YAML.exists(),
-    reason="cross-repo consistency check: sibling atlas-prompts not checked out "
-    "(single-repo CI); runs in the full workspace.",
-)
 class TestLoadRegdocYaml:
     """regdoc-qa.yaml must load and validate without error."""
 
@@ -69,12 +68,12 @@ class TestLoadRegdocYaml:
         assert spec.timeout_s == 60
 
     def test_system_prompt_ref(self) -> None:
-        # Robust against prompt-file renames in atlas-prompts (AGT-11 moved this
-        # from template.jinja → system.txt): assert the ref points under the
+        # Robust against prompt-file renames (AGT-11 moved this from
+        # template.jinja → system.txt): assert the ref points under the
         # regdoc-qa prompt dir AND resolves to a real file, not an exact literal.
         spec = load_spec(_REGDOC_YAML)
         assert spec.system_prompt_ref.startswith("prompts/regdoc-qa/")
-        assert (_REPO_ROOT / "atlas-prompts" / spec.system_prompt_ref).exists()
+        assert (_FIXTURES / spec.system_prompt_ref).exists()
 
 
 class TestInvalidSpecs:
@@ -160,10 +159,6 @@ class TestLoadSpecHelpers:
         with pytest.raises((ValueError, ValidationError)):
             load_spec(p)
 
-    @pytest.mark.skipif(
-        not _REGDOC_YAML.exists(),
-        reason="needs the sibling atlas-prompts regdoc-qa.yaml (absent in single-repo CI).",
-    )
     def test_accepts_path_as_string(self) -> None:
         spec = load_spec(str(_REGDOC_YAML))
         assert spec.agent_name == "regdoc-qa"

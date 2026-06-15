@@ -8,6 +8,25 @@ Runs structured agents (e.g. RegDoc Q&A) against the Atlas Gateway LLM API and a
 
 ---
 
+## Run Trigger Surface (HTTP)
+
+A run is started and polled over a thin FastAPI surface ([ADR-020](../atlas-docs/02-tech-stack-and-adrs.md)). The app factory is `create_app()` in `app/main.py`; serve it with:
+
+```bash
+uvicorn app.main:app
+```
+
+| Method & path | Body | Response |
+|---|---|---|
+| `POST /v1/agent/runs` | `{ "agent": <name>, "user_message": <str> }` | `202` `{ "run_id", "status" }` — starts the run in the background |
+| `GET /v1/agent/runs/{run_id}` | — | `200` `{ "run_id", "status", "result"|null, "error"|null }`; unknown id → `404` |
+
+`status` is one of `running`, `succeeded`, `failed` (the API projection of the persisted `agent_runs.status`). The offline default wires a Mock gateway client and an in-memory store, so the surface runs with no Postgres, network, or API keys. The published contract lives in [`openapi.json`](openapi.json) (regenerate with `python scripts/export_openapi.py`; the drift guard is `tests/test_openapi_contract.py`).
+
+Async Kafka invocation is deferred — the current surface is start + poll over HTTP only.
+
+---
+
 ## Agent Definition Schema (YAML)
 
 ```yaml
@@ -83,13 +102,15 @@ app/
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/agent/runs` | Run an agent (`{agent_name, user_message}`); returns final content + run id |
-| `GET` | `/v1/agent/runs/{id}` | Fetch a persisted run's status + steps (503 if no `ATLAS_DATABASE_URL`) |
-| `GET` | `/healthz` | Liveness |
+| `POST` | `/v1/agent/runs` | Start an agent run (`{agent, user_message}`) in the background; returns `202` `{run_id, status}` |
+| `GET` | `/v1/agent/runs/{id}` | Poll a run; returns `{run_id, status, result\|null, error\|null}` (unknown id → `404`) |
+| `GET` | `/healthz` | Liveness (open — no auth) |
 
-Agent specs are resolved from `ATLAS_AGENTS_DIR` (default `agents/`) as
-`<agent_name>.yaml`. With no provider keys the gateway serves `model=mock`, so
-`agents/regdoc-qa.yaml` runs end-to-end offline.
+Both trigger routes require `Authorization: Bearer <key>` (BRA-878); the
+local/compose default key is `dev-key`. Agent specs are resolved from
+`ATLAS_AGENTS_DIR` (default `agents/`) as `<agent>.yaml`. With no provider keys
+the gateway serves `model=mock`, so `agents/regdoc-qa.yaml` runs end-to-end
+offline.
 
 ---
 
@@ -152,7 +173,7 @@ Spans follow the GenAI semantic conventions:
 ## Python Version & Dependencies
 
 - **Python**: 3.12
-- See `requirements.txt` for pinned versions. Key dependencies:
+- See `requirements.lock` for fully-pinned versions. Key dependencies:
   - `fastapi` + `uvicorn` (run-trigger surface — ADR-020)
   - `anthropic` / gateway HTTP client
   - `mcp` (official Python MCP SDK)
@@ -164,6 +185,13 @@ Spans follow the GenAI semantic conventions:
   - `pyyaml`
 
 No secrets in code — all credentials via environment variables.
+
+### Database migrations
+
+Generating Alembic migrations requires **`trunk` on `PATH`**: `alembic.ini`'s
+`[post_write_hooks]` runs `trunk check --fix` on each new revision (Trunk is the
+single source of truth for ruff — see `.trunk/trunk.yaml`). Without `trunk`
+installed, `alembic revision --autogenerate` fails at the post-write hook.
 
 ---
 

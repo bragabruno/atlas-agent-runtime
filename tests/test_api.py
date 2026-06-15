@@ -1,8 +1,19 @@
-"""AGT-16 — FastAPI trigger surface tests.
+"""AGT-16 + BRA-878 — trigger-surface security tests (auth, sanitizer, traversal).
 
-The gateway client is faked (no network) and persistence uses an in-memory
-SQLite engine (no Postgres). Exercises both the persistence-on and
-persistence-off paths plus error cases.
+Complements `tests/test_api_runs.py` (the happy-path + caps contract) by pinning
+the *security* behavior layered onto main's run-trigger API:
+
+- BRA-878 bearer auth: both trigger routes reject a missing/invalid key with 401
+  before any run is triggered; `/healthz` stays open.
+- AGT-5 sanitizer end-to-end: a poisoned tool-use output is defanged + fenced by
+  the `ToolSanitizer` (wired into `AgentRunner` by `RunService`) before it
+  re-enters the agent's context.
+- Path-traversal hardening: the kebab-case `agent` schema (layer 1) rejects bad
+  names with 422, and the loader's path anchoring (layer 2) blocks a symlink
+  that escapes the agents directory.
+
+Fully offline: `MockGatewayClient`/scripted fakes + in-memory SQLite, no network,
+keys, or Postgres. The default key is ``dev-key`` (``Settings.api_keys``).
 """
 
 from __future__ import annotations
@@ -11,32 +22,20 @@ import os
 from collections.abc import Iterator
 from pathlib import Path
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.api.deps import gateway_client_dep, session_factory_dep, settings_dep
-from app.config import Settings
+from app.api.deps import get_engine, get_gateway_client, get_spec_loader
 from app.loop.gateway_client import LLMRequest, LLMResponse
-from app.main import app
-from app.persistence.session import create_all
+from app.main import create_app
+
+#: Valid bearer header (``dev-key`` is the offline default in ``Settings.api_keys``).
+_AUTH = {"Authorization": "Bearer dev-key"}
+
 
 # ---------------------------------------------------------------------------
-# Fakes / fixtures
+# Scripted gateway fakes
 # ---------------------------------------------------------------------------
-
-
-class _FakeGateway:
-    """GatewayClient stub returning a fixed response (no network)."""
-
-    def __init__(self, response: LLMResponse) -> None:
-        self._response = response
-
-    async def chat(self, request: LLMRequest) -> LLMResponse:
-        return self._response
 
 
 _CITED = LLMResponse(
@@ -44,13 +43,6 @@ _CITED = LLMResponse(
     finish_reason="stop",
     input_tokens=180,
     output_tokens=140,
-)
-
-_TOOL_LOOP = LLMResponse(
-    content="Let me search for more information.",
-    finish_reason="tool_use",
-    input_tokens=40,
-    output_tokens=20,
 )
 
 #: A tool-use response whose content carries an injection imperative plus a
@@ -67,9 +59,9 @@ _POISONED_TOOL_OUTPUT = LLMResponse(
 
 
 class _ScriptedGateway:
-    """GatewayClient stub that returns a fixed list of responses in order and
-    records every request it received (so a test can inspect the ``messages``
-    the runner assembled after sanitizing earlier tool output).
+    """GatewayClient stub: returns a fixed list of responses in order and records
+    every request (so a test can inspect the messages the runner assembled after
+    sanitizing earlier tool output).
     """
 
     def __init__(self, responses: list[LLMResponse]) -> None:
@@ -84,115 +76,97 @@ class _ScriptedGateway:
         return response
 
 
-#: Default bearer header for the agent-trigger routes. ``dev-key`` is the
-#: offline/compose default in ``Settings.api_keys`` (BRA-878).
-_AUTH = {"Authorization": "Bearer dev-key"}
-
-
-def _sqlite_factory() -> sessionmaker[Session]:
-    """In-memory SQLite session factory (single shared connection)."""
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        future=True,
-    )
-    create_all(engine)
-    return sessionmaker(bind=engine, expire_on_commit=False, future=True)
-
-
 @pytest.fixture(autouse=True)
-def clear_overrides() -> Iterator[None]:
+def reset_caches() -> Iterator[None]:
+    """Clear the lru_cached engine/spec-loader before and after each test."""
+    get_engine.cache_clear()
+    get_spec_loader.cache_clear()
     yield
-    app.dependency_overrides.clear()
+    get_engine.cache_clear()
+    get_spec_loader.cache_clear()
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# BRA-878 — bearer auth on the agent-trigger surface
 # ---------------------------------------------------------------------------
 
 
-def test_healthz() -> None:
-    with TestClient(app) as client:
+@pytest.mark.parametrize(
+    "headers",
+    [
+        None,  # no Authorization header
+        {"Authorization": "Bearer wrong-key"},  # key not in allowlist
+        {"Authorization": "dev-key"},  # missing "Bearer " scheme
+        {"Authorization": "Basic dev-key"},  # wrong scheme
+    ],
+)
+def test_start_run_requires_valid_bearer_key(headers: dict[str, str] | None) -> None:
+    """POST /v1/agent/runs rejects a missing/invalid bearer key with 401 before
+    any agent run is triggered (so it cannot spend against the gateway key)."""
+    with TestClient(create_app()) as client:
+        resp = client.post(
+            "/v1/agent/runs",
+            json={"agent": "regdoc-qa", "user_message": "hi"},
+            headers=headers,
+        )
+    assert resp.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        None,
+        {"Authorization": "Bearer wrong-key"},
+        {"Authorization": "dev-key"},
+        {"Authorization": "Basic dev-key"},
+    ],
+)
+def test_poll_run_requires_valid_bearer_key(headers: dict[str, str] | None) -> None:
+    """GET /v1/agent/runs/{run_id} rejects a missing/invalid bearer key with 401."""
+    with TestClient(create_app()) as client:
+        resp = client.get(
+            "/v1/agent/runs/00000000-0000-0000-0000-000000000000",
+            headers=headers,
+        )
+    assert resp.status_code == 401
+
+
+def test_healthz_needs_no_auth() -> None:
+    """/healthz must stay open — no Authorization header required."""
+    with TestClient(create_app()) as client:
         resp = client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
 
 
-def test_create_run_without_persistence() -> None:
-    app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_CITED)
-    app.dependency_overrides[session_factory_dep] = lambda: None
-
-    with TestClient(app) as client:
-        resp = client.post(
-            "/v1/agent/runs",
-            json={"agent_name": "regdoc-qa", "user_message": "What governs consent?"},
-            headers=_AUTH,
-        )
-
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["run_id"] is None
-    assert data["status"] == "completed"
-    assert data["iterations"] == 1
-    assert data["tokens_used"] == 320
-    assert "[src:reg-042]" in data["content"]
-    assert data["agent_version"] == "1.0.0"
-
-
-def test_create_run_with_persistence_then_get() -> None:
-    factory = _sqlite_factory()
-    app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_CITED)
-    app.dependency_overrides[session_factory_dep] = lambda: factory
-
-    with TestClient(app) as client:
-        post = client.post(
-            "/v1/agent/runs",
-            json={"agent_name": "regdoc-qa", "user_message": "What governs consent?"},
-            headers=_AUTH,
-        )
-        assert post.status_code == 201
-        run_id = post.json()["run_id"]
-        assert run_id is not None
-
-        get = client.get(f"/v1/agent/runs/{run_id}", headers=_AUTH)
-
-    assert get.status_code == 200
-    data = get.json()
-    assert data["run_id"] == run_id
-    assert data["status"] == "completed"
-    assert data["tokens_used"] == 320
-    assert data["agent_name"] == "regdoc-qa"
-    assert data["ended_at"] is not None
-    # One llm_call step persisted (stop on first turn).
-    assert len(data["steps"]) == 1
-    assert data["steps"][0]["type"] == "llm_call"
+# ---------------------------------------------------------------------------
+# AGT-5 — sanitizer wired into the run, end-to-end
+# ---------------------------------------------------------------------------
 
 
 def test_poisoned_tool_output_is_sanitized_before_context_reentry() -> None:
     """End-to-end: poisoned tool output must be neutralized before it re-enters
-    the agent loop, proving the route wires a ToolSanitizer into AgentRunner.
+    the agent loop, proving `RunService` wires a `ToolSanitizer` into `AgentRunner`.
 
-    The first gateway turn is a whitelisted ``tool_use`` whose content carries an
-    injection imperative, a forged ``System:`` turn, and a zero-width char. The
-    runner sanitizes that content before appending it to ``messages``; the second
-    turn (``stop``) receives those messages, so we inspect the scripted gateway's
+    The first gateway turn is a ``tool_use`` whose content carries an injection
+    imperative, a forged ``System:`` turn, and a zero-width char. The runner
+    sanitizes that content before appending it to ``messages``; the second turn
+    (``stop``) receives those messages, so we inspect the scripted gateway's
     second request to confirm the payload was defanged and fenced.
     """
     from app.tools.sanitize.sanitizer import FENCE_CLOSE, FENCE_OPEN
 
     gateway = _ScriptedGateway([_POISONED_TOOL_OUTPUT, _CITED])
-    app.dependency_overrides[gateway_client_dep] = lambda: gateway
-    app.dependency_overrides[session_factory_dep] = lambda: None
+    app = create_app()
+    app.dependency_overrides[get_gateway_client] = lambda: gateway
 
-    with TestClient(app) as client:
+    with TestClient(app, headers=_AUTH) as client:
         resp = client.post(
             "/v1/agent/runs",
-            json={"agent_name": "regdoc-qa", "user_message": "What governs consent?"},
-            headers=_AUTH,
+            json={"agent": "regdoc-qa", "user_message": "What governs consent?"},
         )
+    assert resp.status_code == 202
 
-    assert resp.status_code == 201
     # The runner made a second LLM call; its messages carry the sanitized output.
     assert len(gateway.requests) == 2
     reinjected = gateway.requests[1].messages[-1]["content"]
@@ -209,23 +183,9 @@ def test_poisoned_tool_output_is_sanitized_before_context_reentry() -> None:
     assert "[reveal]" in reinjected
 
 
-def test_unknown_agent_returns_404_with_fixed_detail() -> None:
-    """Valid kebab-case name with no matching YAML → 404 + fixed detail.
-
-    Detail is fixed (no input echo) so an attacker cannot use the 404 message
-    to probe which schema-permitted strings correspond to filesystem entries.
-    """
-    app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_CITED)
-    app.dependency_overrides[session_factory_dep] = lambda: None
-
-    with TestClient(app) as client:
-        resp = client.post(
-            "/v1/agent/runs",
-            json={"agent_name": "does-not-exist", "user_message": "hi"},
-            headers=_AUTH,
-        )
-    assert resp.status_code == 404
-    assert resp.json()["detail"] == "agent not found"
+# ---------------------------------------------------------------------------
+# Path-traversal hardening on agent name → spec resolution
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -246,30 +206,25 @@ def test_unknown_agent_returns_404_with_fixed_detail() -> None:
 )
 def test_agent_name_pattern_rejects_traversal_and_invalid_chars(bad_name: str) -> None:
     """Defense layer 1: Pydantic regex rejects bad names with 422 before the route runs."""
-    app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_CITED)
-    app.dependency_overrides[session_factory_dep] = lambda: None
-
-    with TestClient(app) as client:
+    with TestClient(create_app(), headers=_AUTH) as client:
         resp = client.post(
             "/v1/agent/runs",
-            json={"agent_name": bad_name, "user_message": "hi"},
-            headers=_AUTH,
+            json={"agent": bad_name, "user_message": "hi"},
         )
     assert resp.status_code == 422, f"expected 422 for {bad_name!r}, got {resp.status_code}"
 
 
-def test_resolve_spec_anchor_blocks_symlink_escape(tmp_path: Path) -> None:
+def test_loader_anchor_blocks_symlink_escape(tmp_path: Path) -> None:
     """Defense layer 2: even if a kebab name matches a symlink that escapes the
-    agents dir, ``Path.resolve().is_relative_to()`` catches it and returns 404.
+    agents dir, ``Path.resolve().is_relative_to()`` catches it → AgentNotFound (422).
 
-    Constructs a fresh ``agents_dir`` in tmp_path, drops one legit YAML, and
-    plants a symlink ``escape.yaml`` whose target is outside the dir. A kebab
-    name ``escape`` passes the regex but must not load the outside file.
+    Builds a fresh agents dir, drops one legit YAML, and plants a symlink
+    ``escape.yaml`` whose target is outside the dir. The kebab name ``escape``
+    passes the regex but must not load the outside file.
     """
     agents_dir = tmp_path / "agents"
     agents_dir.mkdir()
 
-    # Minimal legit spec the regex+anchor would happily load.
     (agents_dir / "regdoc-qa.yaml").write_text(
         "agent_name: regdoc-qa\n"
         "agent_version: 1.0.0\n"
@@ -282,7 +237,6 @@ def test_resolve_spec_anchor_blocks_symlink_escape(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    # Plant the escape: symlink inside agents_dir → file outside the dir.
     outside = tmp_path / "outside.yaml"
     outside.write_text(
         "agent_name: pwned\n"
@@ -297,159 +251,19 @@ def test_resolve_spec_anchor_blocks_symlink_escape(tmp_path: Path) -> None:
     )
     os.symlink(outside, agents_dir / "escape.yaml")
 
-    app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_CITED)
-    app.dependency_overrides[session_factory_dep] = lambda: None
-    app.dependency_overrides[settings_dep] = lambda: Settings(agents_dir=str(agents_dir))
-
-    with TestClient(app) as client:
-        resp = client.post(
-            "/v1/agent/runs",
-            json={"agent_name": "escape", "user_message": "hi"},
-            headers=_AUTH,
-        )
-    assert resp.status_code == 404
-    assert resp.json()["detail"] == "agent not found"
-
-
-def test_get_run_not_found() -> None:
-    factory = _sqlite_factory()
-    app.dependency_overrides[session_factory_dep] = lambda: factory
-
-    with TestClient(app) as client:
-        resp = client.get("/v1/agent/runs/00000000-0000-0000-0000-000000000000", headers=_AUTH)
-    assert resp.status_code == 404
-
-
-def test_get_run_invalid_uuid() -> None:
-    factory = _sqlite_factory()
-    app.dependency_overrides[session_factory_dep] = lambda: factory
-
-    with TestClient(app) as client:
-        resp = client.get("/v1/agent/runs/not-a-uuid", headers=_AUTH)
-    assert resp.status_code == 400
-
-
-def test_get_run_persistence_disabled_returns_503() -> None:
-    app.dependency_overrides[session_factory_dep] = lambda: None
-
-    with TestClient(app) as client:
-        resp = client.get("/v1/agent/runs/00000000-0000-0000-0000-000000000000", headers=_AUTH)
-    assert resp.status_code == 503
-
-
-def test_cap_breach_persists_capped_status() -> None:
-    factory = _sqlite_factory()
-    # Always returns tool_use → never stops → trips max_iterations (8).
-    app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_TOOL_LOOP)
-    app.dependency_overrides[session_factory_dep] = lambda: factory
-
-    with TestClient(app) as client:
-        post = client.post(
-            "/v1/agent/runs",
-            json={"agent_name": "regdoc-qa", "user_message": "loop forever"},
-            headers=_AUTH,
-        )
-        assert post.status_code == 201
-        assert post.json()["status"] == "capped"
-        run_id = post.json()["run_id"]
-
-        get = client.get(f"/v1/agent/runs/{run_id}", headers=_AUTH)
-    assert get.json()["status"] == "capped"
-
-
-def test_upstream_429_maps_to_429() -> None:
-    class _Throttled:
-        async def chat(self, request: LLMRequest) -> LLMResponse:
-            req = httpx.Request("POST", "http://gw:8000/v1/chat/completions")
-            resp = httpx.Response(429, request=req)
-            raise httpx.HTTPStatusError("429", request=req, response=resp)
-
-    app.dependency_overrides[gateway_client_dep] = lambda: _Throttled()
-    app.dependency_overrides[session_factory_dep] = lambda: None
-
-    with TestClient(app) as client:
-        resp = client.post(
-            "/v1/agent/runs",
-            json={"agent_name": "regdoc-qa", "user_message": "hi"},
-            headers=_AUTH,
-        )
-    assert resp.status_code == 429
-    assert "rate-limited" in resp.json()["detail"]
-
-
-def test_upstream_500_maps_to_502() -> None:
-    class _Broken:
-        async def chat(self, request: LLMRequest) -> LLMResponse:
-            req = httpx.Request("POST", "http://gw:8000/v1/chat/completions")
-            resp = httpx.Response(500, request=req)
-            raise httpx.HTTPStatusError("500", request=req, response=resp)
-
-    app.dependency_overrides[gateway_client_dep] = lambda: _Broken()
-    app.dependency_overrides[session_factory_dep] = lambda: None
-
-    with TestClient(app) as client:
-        resp = client.post(
-            "/v1/agent/runs",
-            json={"agent_name": "regdoc-qa", "user_message": "hi"},
-            headers=_AUTH,
-        )
-    assert resp.status_code == 502
-
-
-# ---------------------------------------------------------------------------
-# BRA-878 — bearer auth on the agent-trigger surface
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "headers",
-    [
-        None,  # no Authorization header
-        {"Authorization": "Bearer wrong-key"},  # key not in allowlist
-        {"Authorization": "dev-key"},  # missing "Bearer " scheme
-        {"Authorization": "Basic dev-key"},  # wrong scheme
-    ],
-)
-def test_create_run_requires_valid_bearer_key(headers: dict[str, str] | None) -> None:
-    """POST /v1/agent/runs rejects a missing/invalid bearer key with 401 before
-    any agent run is triggered (so it cannot spend against the gateway key)."""
-    app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_CITED)
-    app.dependency_overrides[session_factory_dep] = lambda: None
-
-    with TestClient(app) as client:
-        resp = client.post(
-            "/v1/agent/runs",
-            json={"agent_name": "regdoc-qa", "user_message": "hi"},
-            headers=headers,
-        )
-    assert resp.status_code == 401
-
-
-@pytest.mark.parametrize(
-    "headers",
-    [
-        None,
-        {"Authorization": "Bearer wrong-key"},
-        {"Authorization": "dev-key"},
-        {"Authorization": "Basic dev-key"},
-    ],
-)
-def test_get_run_requires_valid_bearer_key(headers: dict[str, str] | None) -> None:
-    """GET /v1/agent/runs/{run_id} rejects a missing/invalid bearer key with 401."""
-    factory = _sqlite_factory()
-    app.dependency_overrides[session_factory_dep] = lambda: factory
-
-    with TestClient(app) as client:
-        resp = client.get(
-            "/v1/agent/runs/00000000-0000-0000-0000-000000000000",
-            headers=headers,
-        )
-    assert resp.status_code == 401
-
-
-def test_healthz_needs_no_auth() -> None:
-    """/healthz must stay open — no Authorization header required."""
-    with TestClient(app) as client:
-        resp = client.get("/healthz")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    old = os.environ.get("ATLAS_AGENTS_DIR")
+    os.environ["ATLAS_AGENTS_DIR"] = str(agents_dir)
+    get_spec_loader.cache_clear()
+    try:
+        with TestClient(create_app(), headers=_AUTH) as client:
+            resp = client.post(
+                "/v1/agent/runs",
+                json={"agent": "escape", "user_message": "hi"},
+            )
+    finally:
+        if old is None:
+            os.environ.pop("ATLAS_AGENTS_DIR", None)
+        else:
+            os.environ["ATLAS_AGENTS_DIR"] = old
+        get_spec_loader.cache_clear()
+    assert resp.status_code == 422
