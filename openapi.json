@@ -334,6 +334,14 @@
         "title": "ValidationError",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "bearerFormat": "Atlas API key",
+        "description": "Atlas API key sent as `Authorization: Bearer <key>`. Local dev default is `dev-key`; real deployments source keys from Key Vault.",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -401,6 +409,16 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer key (`Authorization: Bearer <key>`)."
+          },
           "404": {
             "content": {
               "application/json": {
@@ -442,6 +460,11 @@
             "description": "Upstream gateway returned a non-429 HTTP error."
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Trigger an agent run",
         "tags": [
           "agent-runs"
@@ -484,6 +507,16 @@
             },
             "description": "`run_id` is not a valid UUID."
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer key (`Authorization: Bearer <key>`)."
+          },
           "404": {
             "content": {
               "application/json": {
@@ -515,6 +548,11 @@
             "description": "Run persistence is not configured (`ATLAS_DATABASE_URL` unset)."
           }
         },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Get a persisted run's status",
         "tags": [
           "agent-runs"

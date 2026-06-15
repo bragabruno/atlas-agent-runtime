@@ -84,6 +84,11 @@ class _ScriptedGateway:
         return response
 
 
+#: Default bearer header for the agent-trigger routes. ``dev-key`` is the
+#: offline/compose default in ``Settings.api_keys`` (BRA-878).
+_AUTH = {"Authorization": "Bearer dev-key"}
+
+
 def _sqlite_factory() -> sessionmaker[Session]:
     """In-memory SQLite session factory (single shared connection)."""
     engine = create_engine(
@@ -122,6 +127,7 @@ def test_create_run_without_persistence() -> None:
         resp = client.post(
             "/v1/agent/runs",
             json={"agent_name": "regdoc-qa", "user_message": "What governs consent?"},
+            headers=_AUTH,
         )
 
     assert resp.status_code == 201
@@ -143,12 +149,13 @@ def test_create_run_with_persistence_then_get() -> None:
         post = client.post(
             "/v1/agent/runs",
             json={"agent_name": "regdoc-qa", "user_message": "What governs consent?"},
+            headers=_AUTH,
         )
         assert post.status_code == 201
         run_id = post.json()["run_id"]
         assert run_id is not None
 
-        get = client.get(f"/v1/agent/runs/{run_id}")
+        get = client.get(f"/v1/agent/runs/{run_id}", headers=_AUTH)
 
     assert get.status_code == 200
     data = get.json()
@@ -182,6 +189,7 @@ def test_poisoned_tool_output_is_sanitized_before_context_reentry() -> None:
         resp = client.post(
             "/v1/agent/runs",
             json={"agent_name": "regdoc-qa", "user_message": "What governs consent?"},
+            headers=_AUTH,
         )
 
     assert resp.status_code == 201
@@ -214,6 +222,7 @@ def test_unknown_agent_returns_404_with_fixed_detail() -> None:
         resp = client.post(
             "/v1/agent/runs",
             json={"agent_name": "does-not-exist", "user_message": "hi"},
+            headers=_AUTH,
         )
     assert resp.status_code == 404
     assert resp.json()["detail"] == "agent not found"
@@ -244,6 +253,7 @@ def test_agent_name_pattern_rejects_traversal_and_invalid_chars(bad_name: str) -
         resp = client.post(
             "/v1/agent/runs",
             json={"agent_name": bad_name, "user_message": "hi"},
+            headers=_AUTH,
         )
     assert resp.status_code == 422, f"expected 422 for {bad_name!r}, got {resp.status_code}"
 
@@ -295,6 +305,7 @@ def test_resolve_spec_anchor_blocks_symlink_escape(tmp_path: Path) -> None:
         resp = client.post(
             "/v1/agent/runs",
             json={"agent_name": "escape", "user_message": "hi"},
+            headers=_AUTH,
         )
     assert resp.status_code == 404
     assert resp.json()["detail"] == "agent not found"
@@ -305,7 +316,7 @@ def test_get_run_not_found() -> None:
     app.dependency_overrides[session_factory_dep] = lambda: factory
 
     with TestClient(app) as client:
-        resp = client.get("/v1/agent/runs/00000000-0000-0000-0000-000000000000")
+        resp = client.get("/v1/agent/runs/00000000-0000-0000-0000-000000000000", headers=_AUTH)
     assert resp.status_code == 404
 
 
@@ -314,7 +325,7 @@ def test_get_run_invalid_uuid() -> None:
     app.dependency_overrides[session_factory_dep] = lambda: factory
 
     with TestClient(app) as client:
-        resp = client.get("/v1/agent/runs/not-a-uuid")
+        resp = client.get("/v1/agent/runs/not-a-uuid", headers=_AUTH)
     assert resp.status_code == 400
 
 
@@ -322,7 +333,7 @@ def test_get_run_persistence_disabled_returns_503() -> None:
     app.dependency_overrides[session_factory_dep] = lambda: None
 
     with TestClient(app) as client:
-        resp = client.get("/v1/agent/runs/00000000-0000-0000-0000-000000000000")
+        resp = client.get("/v1/agent/runs/00000000-0000-0000-0000-000000000000", headers=_AUTH)
     assert resp.status_code == 503
 
 
@@ -336,12 +347,13 @@ def test_cap_breach_persists_capped_status() -> None:
         post = client.post(
             "/v1/agent/runs",
             json={"agent_name": "regdoc-qa", "user_message": "loop forever"},
+            headers=_AUTH,
         )
         assert post.status_code == 201
         assert post.json()["status"] == "capped"
         run_id = post.json()["run_id"]
 
-        get = client.get(f"/v1/agent/runs/{run_id}")
+        get = client.get(f"/v1/agent/runs/{run_id}", headers=_AUTH)
     assert get.json()["status"] == "capped"
 
 
@@ -359,6 +371,7 @@ def test_upstream_429_maps_to_429() -> None:
         resp = client.post(
             "/v1/agent/runs",
             json={"agent_name": "regdoc-qa", "user_message": "hi"},
+            headers=_AUTH,
         )
     assert resp.status_code == 429
     assert "rate-limited" in resp.json()["detail"]
@@ -378,5 +391,65 @@ def test_upstream_500_maps_to_502() -> None:
         resp = client.post(
             "/v1/agent/runs",
             json={"agent_name": "regdoc-qa", "user_message": "hi"},
+            headers=_AUTH,
         )
     assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# BRA-878 — bearer auth on the agent-trigger surface
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        None,  # no Authorization header
+        {"Authorization": "Bearer wrong-key"},  # key not in allowlist
+        {"Authorization": "dev-key"},  # missing "Bearer " scheme
+        {"Authorization": "Basic dev-key"},  # wrong scheme
+    ],
+)
+def test_create_run_requires_valid_bearer_key(headers: dict[str, str] | None) -> None:
+    """POST /v1/agent/runs rejects a missing/invalid bearer key with 401 before
+    any agent run is triggered (so it cannot spend against the gateway key)."""
+    app.dependency_overrides[gateway_client_dep] = lambda: _FakeGateway(_CITED)
+    app.dependency_overrides[session_factory_dep] = lambda: None
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/agent/runs",
+            json={"agent_name": "regdoc-qa", "user_message": "hi"},
+            headers=headers,
+        )
+    assert resp.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        None,
+        {"Authorization": "Bearer wrong-key"},
+        {"Authorization": "dev-key"},
+        {"Authorization": "Basic dev-key"},
+    ],
+)
+def test_get_run_requires_valid_bearer_key(headers: dict[str, str] | None) -> None:
+    """GET /v1/agent/runs/{run_id} rejects a missing/invalid bearer key with 401."""
+    factory = _sqlite_factory()
+    app.dependency_overrides[session_factory_dep] = lambda: factory
+
+    with TestClient(app) as client:
+        resp = client.get(
+            "/v1/agent/runs/00000000-0000-0000-0000-000000000000",
+            headers=headers,
+        )
+    assert resp.status_code == 401
+
+
+def test_healthz_needs_no_auth() -> None:
+    """/healthz must stay open — no Authorization header required."""
+    with TestClient(app) as client:
+        resp = client.get("/healthz")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}

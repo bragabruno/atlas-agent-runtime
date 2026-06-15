@@ -8,9 +8,10 @@ each one independently with ``app.dependency_overrides``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Request
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import Settings
 
@@ -22,6 +23,40 @@ if TYPE_CHECKING:
 
 def settings_dep(request: Request) -> Settings:
     return request.app.state.settings
+
+
+# Declared once so FastAPI emits a single `BearerAuth` entry under
+# `components.securitySchemes` in the OpenAPI spec; the two /v1/agent/runs
+# routes that depend on `require_api_key` then advertise
+# `security: [{ BearerAuth: [] }]` and Swagger UI renders the Authorize button.
+# `auto_error=False` keeps the 401 semantics owned by `require_api_key`, mirroring
+# the gateway's deps (the detail strings are part of the contract tests assert).
+bearer_scheme = HTTPBearer(
+    scheme_name="BearerAuth",
+    bearerFormat="Atlas API key",
+    description=(
+        "Atlas API key sent as `Authorization: Bearer <key>`. Local dev "
+        "default is `dev-key`; real deployments source keys from Key Vault."
+    ),
+    auto_error=False,
+)
+
+
+def require_api_key(
+    settings: Annotated[Settings, Depends(settings_dep)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+) -> str:
+    """Enforce ``Authorization: Bearer <key>`` against ``settings.api_keys``.
+
+    Raises 401 on a missing/non-bearer header or a key not in the allowlist.
+    Applied to the agent-trigger routes only; ``/healthz`` stays open (BRA-878).
+    """
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    key = credentials.credentials.strip()
+    if key not in settings.api_keys:
+        raise HTTPException(status_code=401, detail="invalid api key")
+    return key
 
 
 def gateway_client_dep(request: Request) -> GatewayClient:

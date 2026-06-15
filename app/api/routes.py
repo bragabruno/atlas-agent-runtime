@@ -28,7 +28,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.agentspec.model import AgentSpec, load_spec
-from app.api.deps import gateway_client_dep, session_factory_dep, settings_dep
+from app.api.deps import (
+    gateway_client_dep,
+    require_api_key,
+    session_factory_dep,
+    settings_dep,
+)
 from app.api.schemas import (
     CreateRunRequest,
     CreateRunResponse,
@@ -95,6 +100,7 @@ async def healthz() -> dict[str, str]:
     response_model=CreateRunResponse,
     status_code=201,
     tags=["agent-runs"],
+    dependencies=[Depends(require_api_key)],
     summary="Trigger an agent run",
     description=(
         "Synchronously executes the bounded agent loop for the named agent and "
@@ -104,6 +110,10 @@ async def healthz() -> dict[str, str]:
         "otherwise `run_id` is `null` (the run still executes)."
     ),
     responses={
+        401: {
+            "model": ErrorEnvelope,
+            "description": "Missing or invalid bearer key (`Authorization: Bearer <key>`).",
+        },
         404: {
             "model": ErrorEnvelope,
             "description": "Unknown agent — no matching YAML in `ATLAS_AGENTS_DIR`.",
@@ -220,6 +230,7 @@ async def create_run(
     "/v1/agent/runs/{run_id}",
     response_model=RunStatusResponse,
     tags=["agent-runs"],
+    dependencies=[Depends(require_api_key)],
     summary="Get a persisted run's status",
     description=(
         "Returns the persisted run + its ordered steps. Only available when "
@@ -227,6 +238,10 @@ async def create_run(
     ),
     responses={
         400: {"model": ErrorEnvelope, "description": "`run_id` is not a valid UUID."},
+        401: {
+            "model": ErrorEnvelope,
+            "description": "Missing or invalid bearer key (`Authorization: Bearer <key>`).",
+        },
         404: {"model": ErrorEnvelope, "description": "No run with this id."},
         503: {
             "model": ErrorEnvelope,
