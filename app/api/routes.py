@@ -28,7 +28,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.agentspec.model import AgentSpec, load_spec
-from app.api.deps import gateway_client_dep, session_factory_dep, settings_dep
+from app.api.deps import (
+    gateway_client_dep,
+    require_api_key,
+    session_factory_dep,
+    settings_dep,
+)
 from app.api.schemas import (
     CreateRunRequest,
     CreateRunResponse,
@@ -41,6 +46,7 @@ from app.loop.errors import CapBreachError
 from app.loop.gateway_client import GatewayClient
 from app.loop.runner import AgentRunner
 from app.tools.registry.registry import ToolRegistry
+from app.tools.sanitize.sanitizer import ToolSanitizer
 
 router = APIRouter()
 
@@ -94,6 +100,7 @@ async def healthz() -> dict[str, str]:
     response_model=CreateRunResponse,
     status_code=201,
     tags=["agent-runs"],
+    dependencies=[Depends(require_api_key)],
     summary="Trigger an agent run",
     description=(
         "Synchronously executes the bounded agent loop for the named agent and "
@@ -103,13 +110,23 @@ async def healthz() -> dict[str, str]:
         "otherwise `run_id` is `null` (the run still executes)."
     ),
     responses={
+        401: {
+            "model": ErrorEnvelope,
+            "description": "Missing or invalid bearer key (`Authorization: Bearer <key>`).",
+        },
         404: {
             "model": ErrorEnvelope,
             "description": "Unknown agent — no matching YAML in `ATLAS_AGENTS_DIR`.",
         },
         422: {
             "model": ErrorEnvelope,
-            "description": "Cap breach (iterations / tokens / wall-time) from the loop.",
+            "description": (
+                "Two distinct shapes share this status. The route's own cap breach "
+                "(iterations / tokens / wall-time) from the loop returns an "
+                "`ErrorEnvelope` with a string `detail`. FastAPI's request-body "
+                "validation also returns 422, but with its own `HTTPValidationError` "
+                "body where `detail` is a list of error objects — not an `ErrorEnvelope`."
+            ),
         },
         429: {
             "model": ErrorEnvelope,
@@ -129,10 +146,11 @@ async def create_run(
 ) -> CreateRunResponse:
     spec = _resolve_spec(settings, body.agent_name)
     registry = ToolRegistry(spec)
+    sanitizer = ToolSanitizer()
 
     # --- No persistence configured: run and return, run_id is null. ---
     if session_factory is None:
-        runner = AgentRunner(spec=spec, client=gateway, registry=registry)
+        runner = AgentRunner(spec=spec, client=gateway, registry=registry, sanitizer=sanitizer)
         try:
             result = await runner.run(user_message=body.user_message)
         except CapBreachError as exc:
@@ -172,6 +190,7 @@ async def create_run(
             spec=spec,
             client=gateway,
             registry=registry,
+            sanitizer=sanitizer,
             session=session,
             resume_run_id=run_id,
         )
@@ -217,6 +236,7 @@ async def create_run(
     "/v1/agent/runs/{run_id}",
     response_model=RunStatusResponse,
     tags=["agent-runs"],
+    dependencies=[Depends(require_api_key)],
     summary="Get a persisted run's status",
     description=(
         "Returns the persisted run + its ordered steps. Only available when "
@@ -224,6 +244,10 @@ async def create_run(
     ),
     responses={
         400: {"model": ErrorEnvelope, "description": "`run_id` is not a valid UUID."},
+        401: {
+            "model": ErrorEnvelope,
+            "description": "Missing or invalid bearer key (`Authorization: Bearer <key>`).",
+        },
         404: {"model": ErrorEnvelope, "description": "No run with this id."},
         503: {
             "model": ErrorEnvelope,

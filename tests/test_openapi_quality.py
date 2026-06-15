@@ -69,6 +69,8 @@ def test_every_operation_has_summary_description_and_tag(spec: dict[str, Any]) -
             op_id = f"{verb.upper()} {path}"
             if not op.get("summary"):
                 missing.append(f"{op_id}: summary")
+            if not op.get("description"):
+                missing.append(f"{op_id}: description")
             if not op.get("tags"):
                 missing.append(f"{op_id}: tags")
     assert not missing, "operations missing metadata:\n  " + "\n  ".join(missing)

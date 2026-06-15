@@ -8,7 +8,7 @@ descriptions up as docstrings on the generated client.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -77,7 +77,7 @@ class CreateRunResponse(BaseModel):
     )
     agent_name: str = Field(description="Agent name from the resolved YAML spec.")
     agent_version: str = Field(description="Agent version from the resolved YAML spec.")
-    status: str = Field(
+    status: Literal["completed", "capped"] = Field(
         ...,
         description="Terminal run status — `completed` or `capped` (hit a hard cap).",
     )
@@ -95,7 +95,9 @@ class StepView(BaseModel):
     """One persisted step within a run."""
 
     idx: int = Field(description="Zero-based step index within the run.")
-    type: str = Field(description="Step type — `llm`, `tool`, `system`.")
+    type: Literal["llm_call", "tool_call"] = Field(
+        description="Step type — `llm_call` or `tool_call`."
+    )
     tokens: int = Field(description="Tokens consumed by this step.")
     latency_ms: int = Field(description="Step latency in milliseconds.")
     payload: dict[str, Any] = Field(
@@ -133,7 +135,9 @@ class RunStatusResponse(BaseModel):
     run_id: str = Field(description="Persistent run id (UUID).")
     agent_name: str = Field(description="Agent name from the YAML spec.")
     agent_version: str = Field(description="Agent version from the YAML spec.")
-    status: str = Field(description="Run status — `running`, `completed`, `capped`, `failed`.")
+    status: Literal["created", "running", "completed", "failed", "capped"] = Field(
+        description="Run status — `created`, `running`, `completed`, `failed`, or `capped`."
+    )
     token_budget: int | None = Field(
         description="Cap from the agent spec, or `null` if no cap is defined.",
     )

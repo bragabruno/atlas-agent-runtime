@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     #: per environment.
     environment: Literal["dev", "stage", "prod"] = "dev"
 
+    #: Inbound auth allowlist for the trigger surface. A caller must present
+    #: ``Authorization: Bearer <key>`` matching one of these or the request is
+    #: rejected 401 (``/healthz`` stays open). The default ``("dev-key",)``
+    #: matches the local stack so the offline/compose loop keeps working with no
+    #: env var; real deployments source ``ATLAS_API_KEYS`` from Key Vault.
+    api_keys: tuple[str, ...] = ("dev-key",)
+
     #: Atlas Gateway base URL (OpenAI-compatible /v1/chat/completions).
     gateway_url: str = "http://localhost:8000"
 
